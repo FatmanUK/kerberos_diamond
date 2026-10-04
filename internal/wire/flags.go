@@ -14,7 +14,8 @@ import (
 // The constants below are named by bit position, and Has converts.
 type Flags uint32
 
-// Ticket flags, by bit number, from RFC 4120 section 5.3.
+// Ticket flags, from include/krb5/krb5.hin:1717-1733. The values are
+// the C's, not a bit count, and the reason is the gap below.
 const (
 	FlagReserved Flags = 1 << (31 - iota)
 	FlagForwardable
@@ -30,14 +31,29 @@ const (
 	FlagHWAuthent
 	FlagTransitedPolicyChecked
 	FlagOKAsDelegate
-	FlagEncPARep
-	FlagAnonymous
 )
 
-// KDC options, by bit number, from RFC 4120 section 5.4.1. They share
-// the wire representation with ticket flags and mostly the bit
-// positions too, which is why upstream converts between them by
-// masking rather than mapping.
+// Bit 14 does not exist.
+//
+// The run above stops at bit 13 because upstream skips 0x00020000
+// entirely -- it is not even one of the commented-out reserved values
+// in that header, which do resume at 0x00004000. So enc-pa-rep is bit
+// 15 and anonymous is bit 16, and continuing the iota run through
+// them would put both one bit too high: a KDC that set what it
+// thought was enc-pa-rep would be setting a bit no implementation
+// defines, and clients would not see the flag they were promised.
+const (
+	FlagEncPARep  Flags = 0x00010000
+	FlagAnonymous Flags = 0x00008000
+)
+
+// KDC options, from include/krb5/krb5.hin:1620-1650. They share the
+// wire representation with ticket flags and the first six share bit
+// positions too, which is why upstream converts between those by
+// masking rather than mapping (OPTS2FLAGS, kdc/kdc_util.h:493-500).
+// Past that the two sets diverge: request-anonymous is bit 16 in
+// both, but canonicalize, renewable-ok, enc-tkt-in-skey, renew and
+// validate have no ticket flag at all.
 const (
 	OptForwardable   Flags = FlagForwardable
 	OptForwarded     Flags = FlagForwarded
@@ -46,11 +62,26 @@ const (
 	OptAllowPostdate Flags = FlagMayPostdate
 	OptPostdated     Flags = FlagPostdated
 	OptRenewable     Flags = FlagRenewable
-	OptRenewableOK   Flags = 1 << (31 - 27)
-	OptEncTktInSkey  Flags = 1 << (31 - 28)
-	OptRenew         Flags = 1 << (31 - 30)
-	OptValidate      Flags = 1 << (31 - 31)
+
+	OptCNameInAddlTkt Flags = 0x00020000
+	OptCanonicalize   Flags = 0x00010000
+	OptRequestAnon    Flags = 0x00008000
+
+	OptDisableTransitedCheck Flags = 0x00000020
+	OptRenewableOK           Flags = 0x00000010
+	OptEncTktInSKey          Flags = 0x00000008
+	OptRenew                 Flags = 0x00000002
+	OptValidate              Flags = 0x00000001
 )
+
+// ASInvalidOptions are the options that only make sense in a TGS-REQ,
+// and an AS-REQ carrying any of them is refused with
+// KDC_ERR_BADOPTION (AS_INVALID_OPTIONS, kdc/kdc_util.h:456-463).
+//
+// Note that cname-in-addl-tkt is in the set while canonicalize is
+// not, even though they are adjacent bits.
+const ASInvalidOptions = OptForwarded | OptProxy | OptRenew |
+	OptValidate | OptEncTktInSKey | OptCNameInAddlTkt
 
 // Has reports whether every flag in f is set.
 func (fl Flags) Has(f Flags) bool { return fl&f == f }

@@ -22,6 +22,10 @@ func TestFlagBitPositions(t *testing.T) {
 		{"Initial bit 9", FlagInitial, 0x00400000},
 		{"PreAuthent bit 10", FlagPreAuthent, 0x00200000},
 		{"OKAsDelegate bit 13", FlagOKAsDelegate, 0x00040000},
+		{"EncPARep bit 15", FlagEncPARep, 0x00010000},
+		{"Anonymous bit 16", FlagAnonymous, 0x00008000},
+		{"Canonicalize bit 15", OptCanonicalize, 0x00010000},
+		{"RequestAnon bit 16", OptRequestAnon, 0x00008000},
 		{"RenewableOK bit 27", OptRenewableOK, 0x00000010},
 		{"Renew bit 30", OptRenew, 0x00000002},
 		{"Validate bit 31", OptValidate, 0x00000001},
@@ -258,5 +262,51 @@ func TestCheckPvnoRejectsOtherVersions(t *testing.T) {
 	}
 	if err := checkPvno(4); err == nil {
 		t.Error("accepted pvno 4")
+	}
+}
+
+// Bit 14 is skipped: upstream defines no flag at 0x00020000 and does
+// not even list it among the commented-out reserved values that
+// resume at 0x00004000. Continuing the constant run through it would
+// put enc-pa-rep and anonymous one bit too high, and nothing in a
+// round trip would notice.
+func TestBitFourteenIsNotAFlag(t *testing.T) {
+	for _, f := range []Flags{
+		FlagReserved, FlagForwardable, FlagForwarded,
+		FlagProxiable, FlagProxy, FlagMayPostdate,
+		FlagPostdated, FlagInvalid, FlagRenewable,
+		FlagInitial, FlagPreAuthent, FlagHWAuthent,
+		FlagTransitedPolicyChecked, FlagOKAsDelegate,
+		FlagEncPARep, FlagAnonymous,
+	} {
+		if f == 0x00020000 {
+			t.Error("a ticket flag claims bit 14")
+		}
+	}
+}
+
+// An AS-REQ carrying a TGS-only option is refused, and the set is not
+// the obvious one: cname-in-addl-tkt is in it and the adjacent
+// canonicalize bit is not.
+func TestASInvalidOptions(t *testing.T) {
+	in := []Flags{
+		OptForwarded, OptProxy, OptRenew, OptValidate,
+		OptEncTktInSKey, OptCNameInAddlTkt,
+	}
+	for _, o := range in {
+		if ASInvalidOptions&o == 0 {
+			t.Errorf("%08X is not refused", uint32(o))
+		}
+	}
+	out := []Flags{
+		OptForwardable, OptProxiable, OptAllowPostdate,
+		OptPostdated, OptRenewable, OptRenewableOK,
+		OptCanonicalize, OptRequestAnon,
+	}
+	for _, o := range out {
+		if ASInvalidOptions&o != 0 {
+			t.Errorf("%08X is refused but should not be",
+				uint32(o))
+		}
 	}
 }
