@@ -39,6 +39,14 @@ type Config struct {
 	TLSCertFile string
 	TLSKeyFile  string
 
+	// MasterPassword is what the database master key is derived
+	// from. There is no stash file: the key is string-to-key over
+	// the salt for K/M@REALM, so realm plus password determine it
+	// and a replacement container derives the same key from the
+	// same environment. It is the only secret the KDC holds and
+	// the whole database is readable to anyone who learns it.
+	MasterPassword string
+
 	// ClockSkew is how far a timestamp may be from this host's
 	// clock and still be accepted.
 	ClockSkew time.Duration
@@ -69,6 +77,8 @@ func Load() (*Config, error) {
 		TLSCertFile: os.Getenv("KD_TLS_CERT_FILE"),
 		TLSKeyFile:  os.Getenv("KD_TLS_KEY_FILE"),
 		ClockSkew:   defaultClockSkew,
+
+		MasterPassword: os.Getenv("KD_MASTER_PASSWORD"),
 	}
 
 	var errs []error
@@ -97,6 +107,8 @@ func (c *Config) required() map[string]string {
 		"KD_REALM":         c.Realm,
 		"KD_TLS_CERT_FILE": c.TLSCertFile,
 		"KD_TLS_KEY_FILE":  c.TLSKeyFile,
+
+		"KD_MASTER_PASSWORD": c.MasterPassword,
 	}
 }
 

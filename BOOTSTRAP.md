@@ -38,15 +38,19 @@ that have aged worst in the C:
   HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
   checked, and the default salt is cross-checked against what the C KDC
   actually computes.
+- **`internal/store` is done** for what the AS exchange needs: the schema,
+  principal lookup, the stored-key blob layout, the kvno/enctype key search
+  ported from `krb5_dbe_def_search_enctype`, and `SetPassword` for
+  provisioning. Tests run against a real Postgres in a scratch schema and
+  skip when `KD_TEST_DATABASE_URL` is unset.
 - **`internal/wire` is done** for the AS exchange: AS-REQ, AS-REP, Ticket,
   EncTicketPart, EncKDCRepPart, KRB-ERROR, PA-ENC-TS-ENC, PA-ETYPE-INFO2 and
   the MS-KKDCP envelope, with the TCP framing. Every one of them is decoded
   from upstream's own byte-exact reference output and re-encoded to identical
   octets.
-- **No store or KDC yet.** `internal/store`, `internal/kdc` and
-  `internal/transport` hold a doc comment and nothing else, and both binaries
-  refuse to run with "not implemented yet" after loading their
-  configuration.
+- **No KDC yet.** `internal/kdc` and `internal/transport` hold a doc comment
+  and nothing else, and both binaries refuse to run with "not implemented
+  yet" after loading their configuration.
 - Planning is complete and the architecture in §3.2 and §3.3 is settled. §2
   is the order of work; steps 1 and 2 are done and step 3 is under way.
 
@@ -168,6 +172,49 @@ are not "fixed" back by accident.
   fixed password gives a reproducible master key and reproducible stored
   keys. The realm is built at container start rather than baked into the
   image, so each run begins from an identical database with no history.
+**The principal store:**
+
+- **The schema follows `kadmin/dbutil/tabdump.c`, not `krb5_db_entry`.**
+  `include/kdb.h:191-213` is the field inventory, but tabdump already projects
+  that struct into flat relations — `keydata`, `princ_flags`, `princ_lockout`,
+  `princ_meta`, `princ_stringattrs`, `princ_tktpolicy`, `alias` — and that
+  projection is the schema. Following it means a `tabdump` and a `SELECT` line
+  up field for field, which is what makes the two implementations comparable.
+  Every column of tabdump's `princ_meta` (`:443-513`) is *derived* from
+  tl-data rather than being a struct field; here they are real columns.
+- **tl-data types 1, 2, 3, 8 and 0x0b are promoted to columns**, and
+  everything else is kept verbatim in a generic `tl_data(principal, type,
+  contents)` table. Upstream's `tl_data` is an open extensibility bag and a
+  KDB can carry types this implementation has never heard of — PAC logon
+  info, server referrals, X.509 subject names. Dropping them on import would
+  silently lose data another KDC put there, so dump and load stay possible.
+- **Stored key material keeps upstream's blob layout**:
+  `uint16le(true key length)` followed by the master-key-encrypted key,
+  decrypted with **key usage 0** and no IV, and truncated to the declared
+  length because the plaintext may be longer (`lib/kdb/decrypt_key.c:76-98`).
+  The length prefix is not redundant — the ciphertext's plaintext carries a
+  confounder — and the blob records no enctype of its own, so a `Key` row's
+  enctype is the *key's*, not the ciphertext's. Keeping the layout is what
+  lets an existing KDB be read and a dump round-trip.
+- **The master-key indirection is kept, and the stash file is not.** Relying
+  on database-level encryption instead was considered and rejected: a KDC
+  assumes that reading the database is not the same as holding every
+  principal's long-term key, and a `pg_dump` of plaintext key columns would
+  end that assumption. Instead the key is derived at startup from
+  `KD_MASTER_PASSWORD` by string-to-key over the salt for `K/M@REALM`,
+  exactly as `kdb5_util create` does
+  (`kadmin/dbutil/kdb5_create.c:223-231`). Realm plus password plus enctype
+  determine it completely, so there is nothing on disk to stash and a
+  replacement container derives the same key from the same environment —
+  which is what a 12-factor process wants. The password becomes the only
+  secret and has to be treated as one.
+- **One master key, not a list — and the gap is reported, not hidden.**
+  Upstream carries a list with a per-entry `mkvno`, tries each in turn, and
+  reloads from disk once on total failure, which is how a live KDC survives a
+  rollover. None of that is implemented. A row whose `mkvno` is neither zero
+  nor the loaded version is refused with a distinct error rather than
+  reported as a bad password, so the missing feature is visible instead of
+  baffling.
 - **Argon2id passwords**, with legacy algorithms read but not written.
 - **New code says TLS, not SSL** — it's been TLS for over 20 years. Time to
   drop the SSL nomenclature (except where it would cause a problem).
@@ -196,16 +243,20 @@ are not "fixed" back by accident.
 
 ## 4. Dependency Map
 
-**`go.mod` requires nothing yet**, because nothing imports anything yet. The
-modules below are the *intended* set and are added as the code that needs
-them lands — a `require` for an unimported module is one `go mod tidy` away
-from deletion, so listing them early would not survive.
+Modules are added as the code that needs them lands, never ahead of it: a
+`require` for an unimported module is one `go mod tidy` away from deletion,
+so listing it early would not survive.
 
-**External Go modules** (intended):
+**External Go modules, required now:**
+
+- `gorm.io/gorm` + `gorm.io/driver/postgres` — the principal store. They
+  bring `jackc/pgx/v5`, `jackc/pgpassfile`, `jackc/pgservicefile`,
+  `jackc/puddle/v2`, `jinzhu/inflection`, `jinzhu/now`, `golang.org/x/sync`
+  and `golang.org/x/text` with them, all indirect.
+
+**Intended, not yet required:**
 
 - `golang.org/x/crypto` — Argon2id, when §3.3's password work lands
-- `gorm.io/gorm` + `gorm.io/driver/postgres` (+ transitive `jackc/pgx`,
-  `pgpassfile`, `pgservicefile`, `puddle`) — persistence
 
 The standard library covers more of this than it might seem:
 `encoding/asn1` for the wire types, `crypto/aes`, `crypto/hmac`,
@@ -268,6 +319,17 @@ tests. It is green.
     upstream's test program does not cover it — so it is round-tripped against
     itself and its shape asserted by hand. It is checked for real by the shim
     talking to a stock client.
+- **`internal/store`** — covered against a real Postgres, not a mock. Schema
+  isolation is asserted rather than assumed: `assertSchemaIsolated` checks the
+  tables landed in the scratch schema and *not* in `public`, which is what
+  catches the `SET search_path` failure mode §3.4 warns about. Beyond the
+  round trips: that a stored key decrypts to exactly what string-to-key
+  produces for the principal's own salt, that keys come back highest-kvno
+  first and that an ascending list would fail, that saving replaces a key list
+  rather than merging it, that tl-data types the code does not understand
+  survive, and that a wrong master key version is its own error. The blob
+  layout, the key search and principal-name escaping are unit-tested with no
+  database at all, so `make test-short` still covers them.
 - **Everything else** — not written, so not tested. The packages hold a
   doc comment and nothing else.
 - **`internal/golden`** — the oracle half is covered by six tests against the

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// setMinimal puts the four variables that have no default into the
+// setMinimal puts the variables that have no default into the
 // environment, so a test can vary one thing at a time.
 func setMinimal(t *testing.T) {
 	t.Helper()
@@ -15,6 +15,7 @@ func setMinimal(t *testing.T) {
 	t.Setenv("KD_REALM", "KDIAMOND.TEST")
 	t.Setenv("KD_TLS_CERT_FILE", "/tls/cert.pem")
 	t.Setenv("KD_TLS_KEY_FILE", "/tls/key.pem")
+	t.Setenv("KD_MASTER_PASSWORD", "masterpassword")
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -61,6 +62,7 @@ func TestLoadReportsEveryMissingVariable(t *testing.T) {
 	t.Setenv("KD_REALM", "")
 	t.Setenv("KD_TLS_CERT_FILE", "")
 	t.Setenv("KD_TLS_KEY_FILE", "")
+	t.Setenv("KD_MASTER_PASSWORD", "")
 
 	_, err := Load()
 	if err == nil {
@@ -72,6 +74,7 @@ func TestLoadReportsEveryMissingVariable(t *testing.T) {
 	for _, name := range []string{
 		"KD_DATABASE_URL", "KD_REALM",
 		"KD_TLS_CERT_FILE", "KD_TLS_KEY_FILE",
+		"KD_MASTER_PASSWORD",
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error does not mention %s: %v",
