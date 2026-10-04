@@ -10,8 +10,12 @@ with six deliberate departures: Go instead of C, TLS-only networking, Postgres/G
 instead of a flat-file database, rootless Podman containers instead of autotools,
 crash-only architecture and high-availability through the 12-factor manifesto.
 
-**There must be exactly one plan file**, in `~/.claude/plans/`. `BOOTSTRAP.md` §2 is
- the narrative of what has landed, and the plan file is what is next.
+**There must be exactly one plan file for this project**, and it is
+`~/.claude/plans/ah-no-that-s-the-rustling-cat.md`. That directory is shared
+across every project on this machine, so other plan files live there too:
+they belong to unrelated work and are never read or edited from here.
+`BOOTSTRAP.md` §2 is the narrative of what has landed, and the plan file is
+what is next.
 
 ## The C reference is a submodule
 
@@ -54,8 +58,25 @@ say so and cite the file and line.
 
 ## The golden-output harness
 
-`internal/golden` is the oracle. It builds a test database, drives the same
+**This does not exist yet.** It is the plan file's Step 2, and it is
+described here because everything else in this document assumes it.
+
+`internal/golden` will be the oracle. It builds a test realm, drives the same
 script through Kerberos 5 built from the `kerberos` submodule and through this
-project, and diffs the transcripts. The C runs in a container over TCP; this
-project runs in-process. Reading the C and reasoning about it is guesswork;
-the harness answers directly.
+project, and diffs the decoded messages. The C will run in a container over
+TCP; this project runs in-process.
+
+Reading the C and reasoning about it is guesswork; the harness answers
+directly. That is the whole reason it comes before the protocol code rather
+than after it.
+
+Two things known in advance about the diff, both from the C:
+
+- **Byte-exact comparison cannot work.** Every `krb5_c_encrypt` prepends a
+  fresh random confounder (`lib/crypto/krb/enc_dk_hmac.c:144`), so every
+  ciphertext differs run to run even with identical keys and plaintext. The
+  comparison is of decoded structures with the volatile fields normalized.
+- **A case where both implementations fail identically passes while testing
+  nothing.** Two KDCs both answering `KRB5KDC_ERR_C_PRINCIPAL_UNKNOWN` agree
+  perfectly. Every case must assert the exchange *succeeded*, not merely that
+  the two sides matched.

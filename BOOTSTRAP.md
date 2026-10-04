@@ -24,22 +24,50 @@ that have aged worst in the C:
 
 ### Where it stands
 
-- Still in planning.
+- **No Go in the tree yet** — no `go.mod`, no packages, nothing tested. The
+  repository holds this file, `CLAUDE.md`, `.gitmodules` and the `kerberos/`
+  submodule.
+- Planning is complete and the architecture in §3.2 and §3.3 is settled. §2
+  is the order of work.
 
 ## 2. Next Three Steps
 
-To be determined by planning, though the plan's first step will be to update
-`CLAUDE.md` and `BOOTSTRAP.md`.
+Planning is done; the plan file holds the detail. The increment it describes
+is a vertical slice — a stock `kinit`, built from the `kerberos/` submodule
+and otherwise unmodified, obtaining a TGT from the Go KDC, with the golden
+harness proving the AS-REP matches the C KDC's field for field. It does not
+attempt the TGS exchange, kadmin, FAST or cross-realm.
+
+1. **The repository skeleton.** `go.mod`, the `Makefile`, the container and
+   deployment files, CI, and the package layout. No Kerberos logic.
+2. **The C oracle.** The container that builds Kerberos 5 from the submodule
+   and sets up a realm non-interactively. It depends on no Go at all, so it
+   comes before any protocol code and every later commit has a reference to
+   check against.
+3. **The protocol slice.** `internal/crypto` (two AES enctypes behind a
+   dispatch table), `internal/wire` (the ASN.1 the AS exchange touches),
+   `internal/store` (principals in Postgres), then the AS exchange itself and
+   the differential test.
 
 ## 3. Project State
 
 ### 3.1 Key Logic
 
-- Nothing decided yet.
+- Nothing implemented yet. The first enctypes will be
+  `aes256-cts-hmac-sha1-96` and `aes128-cts-hmac-sha1-96` — what a stock
+  client negotiates by default — behind a dispatch table from the outset, so
+  later enctype families are rows rather than special cases.
 
 ### 3.2 Architecture
 
-- Nothing decided yet.
+Decided, not yet built.
+
+- **Packages**: `internal/config` (12-factor env), `internal/store`
+  (Postgres/GORM), `internal/wire` (ASN.1/DER), `internal/crypto` (RFC
+  3961/3962), `internal/kdc` (the exchanges), `internal/transport` (the
+  listener), `internal/golden` (the harness).
+- **Binaries**: `cmd/kdiamond`, the KDC daemon, and `cmd/kdiamond-proxy`, the
+  client-side KKDCP shim described in §3.3.
 
 ### 3.3 Decisions
 
@@ -54,6 +82,28 @@ are not "fixed" back by accident.
 **Compatibility choices:**
 
 - **TLS only** — no cleartext, no STARTTLS.
+- **The wire transport is MS-KKDCP over HTTPS.** The KDC is an HTTPS server;
+  KDC messages travel in a DER `KDC-PROXY-MESSAGE` posted as
+  `application/kerberos`, and `kerb-message` carries the 4-byte big-endian
+  length prefix as though it were the TCP payload. This was chosen because
+  upstream already supports it on the client side
+  (`lib/krb5/os/sendto_kdc.c:604`, `lib/krb5/os/locate_kdc.c:217`), so "TLS
+  only" costs no client compatibility: a realm stanza naming
+  `kdc = https://host:port/path` is all a capable client needs.
+- **No OpenSSL anywhere, including in the C oracle.** Upstream's `k5tls`
+  plugin is the only part of Kerberos 5 that wants it — core crypto defaults
+  to `CRYPTO_IMPL=builtin` (`src/configure.ac:266-273`) — so the oracle is
+  built `--with-tls-impl=no`. `configure.ac:296-322` accepts only `openssl`,
+  `auto` or `no`, and `auto` links libssl if it happens to be installed, so
+  the flag is passed explicitly.
+- **`cmd/kdiamond-proxy` carries TLS for clients that cannot.** A client
+  built without a TLS module — the oracle's, for one — reaches the KDC
+  through this shim: plain Kerberos TCP on loopback in, KKDCP over HTTPS
+  out, TLS by Go's `crypto/tls`. It is a supported component rather than a
+  test fixture, because any real client built without a TLS module needs
+  exactly this. The loopback hop is cleartext, so a test using it
+  demonstrates protocol interoperability, not that the client negotiated
+  the TLS itself.
 - **Argon2id passwords**, with legacy algorithms read but not written.
 - **New code says TLS, not SSL** — it's been TLS for over 20 years. Time to
   drop the SSL nomenclature (except where it would cause a problem).
@@ -70,6 +120,9 @@ are not "fixed" back by accident.
   user has unlocked the key. Never use `--no-gpg-sign`.
 
 ## 4. Dependency Map
+
+**There is no `go.mod` yet.** This section is the *intended* dependency set,
+not a reading of the tree.
 
 **External Go modules** (`go.mod`):
 
@@ -91,6 +144,7 @@ Most recent first.
 
 | Commit | Summary |
 |---|---|
+| `5b2cc58` | Add initial CLAUDE.md and BOOTSTRAP.md |
 | `02c5b04` | Add source submodule |
 
 Working branch: `mother`. Never merge the `kerberos/`-adjacent branches
