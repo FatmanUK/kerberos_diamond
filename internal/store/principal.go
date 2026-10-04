@@ -204,3 +204,37 @@ func newKey(
 		MKVNO:    mkey.KVNO,
 	}, nil
 }
+
+// The lifetime defaults a new principal gets, which are kadmin's: one
+// day of ticket life and *zero* renewable life
+// (lib/kadm5/alt_prof.c:573-578).
+//
+// The zero is not an oversight to improve on. It means a freshly
+// created realm issues renewable tickets whose renew-till equals
+// their start time, because kdc_get_ticket_renewtime takes a plain
+// min against it -- which is why `kinit -r 7d` against a new MIT
+// realm appears to do nothing until an operator sets a renewable life
+// on both the client and the krbtgt. Matching it is the point.
+const (
+	DefaultMaxLife          int32 = 24 * 60 * 60
+	DefaultMaxRenewableLife int32 = 0
+)
+
+// NewPrincipal builds a principal with kadmin's defaults applied.
+//
+// Going through this rather than a bare struct literal is what keeps
+// a Go-provisioned realm comparable with a kadmin-provisioned one: a
+// principal with MaxLife left at zero would be *unlimited* to the KDC
+// and would issue longer tickets than its C counterpart.
+func NewPrincipal(
+	realm string,
+	components []string,
+) *Principal {
+	return &Principal{
+		Name:             UnparseName(realm, components),
+		Realm:            realm,
+		NameType:         1,
+		MaxLife:          DefaultMaxLife,
+		MaxRenewableLife: DefaultMaxRenewableLife,
+	}
+}

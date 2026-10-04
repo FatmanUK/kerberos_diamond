@@ -256,3 +256,43 @@ func lastReqValues(ds []derLastReqEntry) []LastReqEntry {
 	}
 	return out
 }
+
+// MarshalPADataSeq encodes a bare SEQUENCE OF PA-DATA, which is what
+// a KRB-ERROR's e-data carries (encode_krb5_padata_sequence, used at
+// kdc/do_as_req.c:814). There is no application tag and no wrapper.
+//
+// An empty sequence encodes as the two bytes 30 00, which upstream's
+// own reference output shows, so it is a thing that can legitimately
+// travel -- unlike the optional padata field inside a KDC-REQ, which
+// is omitted when empty.
+func MarshalPADataSeq(ps []PAData) ([]byte, error) {
+	ds := make([]derPAData, len(ps))
+	for i, p := range ps {
+		ds[i] = derPAData{Type: p.Type, Value: p.Value}
+	}
+	return asn1.Marshal(ds)
+}
+
+// UnmarshalPADataSeq decodes a bare SEQUENCE OF PA-DATA.
+func UnmarshalPADataSeq(b []byte) ([]PAData, error) {
+	var ds []derPAData
+	if _, err := asn1.Unmarshal(b, &ds); err != nil {
+		return nil, derErr("PA-DATA sequence", err)
+	}
+	return paDataValues(ds), nil
+}
+
+// MarshalEncryptedData encodes an EncryptedData on its own, which is
+// how a PA-ENC-TIMESTAMP's value is carried.
+func MarshalEncryptedData(e EncryptedData) ([]byte, error) {
+	return asn1.Marshal(e.der())
+}
+
+// UnmarshalEncryptedData decodes a standalone EncryptedData.
+func UnmarshalEncryptedData(b []byte) (EncryptedData, error) {
+	var d derEncryptedData
+	if _, err := asn1.Unmarshal(b, &d); err != nil {
+		return EncryptedData{}, derErr("EncryptedData", err)
+	}
+	return d.value(), nil
+}

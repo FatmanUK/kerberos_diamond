@@ -2,7 +2,6 @@ package wire
 
 import (
 	"encoding/asn1"
-	"fmt"
 	"time"
 )
 
@@ -94,7 +93,7 @@ func UnmarshalTicket(b []byte) (Ticket, error) {
 	var d derTicket
 	if _, err := asn1.UnmarshalWithParams(
 		b, &d, appParams(tagTicket)); err != nil {
-		return Ticket{}, fmt.Errorf("Ticket: %w", err)
+		return Ticket{}, derErr("Ticket", err)
 	}
 	if err := checkPvno(d.TktVno); err != nil {
 		return Ticket{}, err
@@ -137,8 +136,8 @@ func UnmarshalEncTicketPart(b []byte) (EncTicketPart, error) {
 	var d derEncTicketPart
 	if _, err := asn1.UnmarshalWithParams(
 		b, &d, appParams(tagEncTktPt)); err != nil {
-		return EncTicketPart{}, fmt.Errorf(
-			"EncTicketPart: %w", err)
+		return EncTicketPart{}, derErr(
+			"EncTicketPart", err)
 	}
 	return d.value()
 }

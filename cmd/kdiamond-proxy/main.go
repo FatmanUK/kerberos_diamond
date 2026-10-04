@@ -14,10 +14,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
+	"net"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/FatmanUK/kerberos_diamond/internal/transport"
 )
 
 // version is set at link time; see the Makefile's LDFLAGS.
@@ -36,6 +44,8 @@ func run(args []string) error {
 		"host:port to accept plain Kerberos TCP on")
 	kdc := fs.String("kdc", "",
 		"KDC URL, e.g. https://kdc.example:8088/KdcProxy")
+	realm := fs.String("realm", "",
+		"realm to send as target-domain")
 	showVersion := fs.Bool("version", false,
 		"print the version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -49,6 +59,39 @@ func run(args []string) error {
 		fs.Usage()
 		return errors.New("-kdc is required")
 	}
-	_ = *listen
-	return errors.New("not implemented yet")
+	return forward(*listen, *kdc, *realm)
+}
+
+// forward runs the shim until a signal arrives.
+//
+// The listener is bound before anything else so that a port already
+// in use fails immediately rather than after the first client
+// connects.
+func forward(listen, kdc, realm string) error {
+	ctx, stop := signal.NotifyContext(context.Background(),
+		syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	l, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	go func() {
+		<-ctx.Done()
+		l.Close()
+	}()
+
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log.Info("kdiamond-proxy listening",
+		"addr", l.Addr().String(), "kdc", kdc)
+	s := &transport.Shim{
+		Client: &transport.Client{
+			URL:   kdc,
+			Realm: realm,
+		},
+		Timeout: 60 * time.Second,
+		Log:     log,
+	}
+	return s.Serve(ctx, l)
 }

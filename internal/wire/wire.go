@@ -78,6 +78,19 @@ const (
 // DER of the wrong shape.
 var ErrMalformed = errors.New("malformed message")
 
+// derErr wraps a decoder failure so that every rejection from this
+// package matches ErrMalformed.
+//
+// Without this, a message that is not DER at all comes back carrying
+// only encoding/asn1's own error while a message that is DER of the
+// wrong shape carries ErrMalformed -- so a caller distinguishing "the
+// peer sent rubbish" from "we could not answer" gets the first case
+// wrong. internal/transport answers one with 400 and the other with
+// 500, which is where it shows.
+func derErr(what string, err error) error {
+	return fmt.Errorf("%w: %s: %v", ErrMalformed, what, err)
+}
+
 // gstring wraps a Go string as a bare DER GeneralString, for the
 // elements of a SEQUENCE OF where encoding/asn1 adds no tag of its
 // own.
@@ -151,7 +164,7 @@ func ctxGstringValue(r asn1.RawValue) (string, error) {
 	var inner asn1.RawValue
 	rest, err := asn1.Unmarshal(r.Bytes, &inner)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrMalformed, err)
+		return "", derErr("GeneralString", err)
 	}
 	if len(rest) != 0 {
 		return "", fmt.Errorf(

@@ -116,7 +116,7 @@ func UnmarshalASReq(b []byte) (ASReq, error) {
 	var d derASReq
 	if _, err := asn1.UnmarshalWithParams(
 		b, &d, appParams(tagASReq)); err != nil {
-		return ASReq{}, fmt.Errorf("AS-REQ: %w", err)
+		return ASReq{}, derErr("AS-REQ", err)
 	}
 	if err := checkPvno(d.Pvno); err != nil {
 		return ASReq{}, err

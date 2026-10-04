@@ -139,7 +139,7 @@ func UnmarshalASRep(b []byte) (ASRep, error) {
 	var d derASRep
 	if _, err := asn1.UnmarshalWithParams(
 		b, &d, appParams(tagASRep)); err != nil {
-		return ASRep{}, fmt.Errorf("AS-REP: %w", err)
+		return ASRep{}, derErr("AS-REP", err)
 	}
 	if err := checkPvno(d.Pvno); err != nil {
 		return ASRep{}, err
@@ -205,8 +205,8 @@ func UnmarshalEncKDCRepPart(b []byte) (EncKDCRepPart, error) {
 			b, &d, appParams(tagEncASRepPart))
 	}
 	if err != nil {
-		return EncKDCRepPart{}, fmt.Errorf(
-			"EncKDCRepPart: %w", err)
+		return EncKDCRepPart{}, derErr(
+			"EncKDCRepPart", err)
 	}
 	return d.value()
 }

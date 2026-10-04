@@ -2,7 +2,6 @@ package wire
 
 import (
 	"encoding/asn1"
-	"fmt"
 	"time"
 )
 
@@ -35,8 +34,7 @@ func MarshalPAEncTSEnc(p PAEncTSEnc) ([]byte, error) {
 func UnmarshalPAEncTSEnc(b []byte) (PAEncTSEnc, error) {
 	var d derPAEncTSEnc
 	if _, err := asn1.Unmarshal(b, &d); err != nil {
-		return PAEncTSEnc{}, fmt.Errorf(
-			"PA-ENC-TS-ENC: %w", err)
+		return PAEncTSEnc{}, derErr("PA-ENC-TS-ENC", err)
 	}
 	return PAEncTSEnc{
 		PATimestamp: d.Stamp,
@@ -88,7 +86,7 @@ func MarshalETypeInfo2(es []ETypeInfo2Entry) ([]byte, error) {
 func UnmarshalETypeInfo2(b []byte) ([]ETypeInfo2Entry, error) {
 	var ds []derETypeInfo2Entry
 	if _, err := asn1.Unmarshal(b, &ds); err != nil {
-		return nil, fmt.Errorf("PA-ETYPE-INFO2: %w", err)
+		return nil, derErr("PA-ETYPE-INFO2", err)
 	}
 	out := make([]ETypeInfo2Entry, len(ds))
 	for i, d := range ds {

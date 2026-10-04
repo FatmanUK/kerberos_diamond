@@ -1,0 +1,228 @@
+package kdc
+
+import (
+	"testing"
+	"time"
+
+	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+)
+
+// A principal with +requires_preauth gets refused first and told what
+// to send, which is the whole of the two-round-trip handshake.
+func TestPreauthRequiredCarriesAHint(t *testing.T) {
+	k := testKDC(t)
+	_, kerr := k.AS(asRequest([]string{"preauth"}))
+	if kerr == nil {
+		t.Fatal("issued a ticket without preauth")
+	}
+	if kerr.ErrorCode != wire.ErrCodePreauthRequired {
+		t.Fatalf("code is %d, want %d", kerr.ErrorCode,
+			wire.ErrCodePreauthRequired)
+	}
+	hints, err := wire.UnmarshalPADataSeq(kerr.EData)
+	if err != nil {
+		t.Fatalf("e-data: %v", err)
+	}
+	if len(hints) != 2 {
+		t.Fatalf("got %d hints: %+v", len(hints), hints)
+	}
+	// PA-ETYPE-INFO2 first, then the empty PA-ENC-TIMESTAMP,
+	// which is upstream's order (kdc/kdc_preauth.c:383-387).
+	if hints[0].Type != wire.PAETypeInfo2 {
+		t.Errorf("first hint is type %d", hints[0].Type)
+	}
+	if hints[1].Type != wire.PAEncTimestamp {
+		t.Errorf("second hint is type %d", hints[1].Type)
+	}
+	if len(hints[1].Value) != 0 {
+		t.Errorf("PA-ENC-TIMESTAMP hint carries %d bytes",
+			len(hints[1].Value))
+	}
+}
+
+// The hint names one enctype, not every enctype the client holds:
+// make_etype_info builds exactly one entry, from the already-selected
+// client key (kdc/kdc_preauth.c:1046-1069).
+func TestETypeInfo2HasOneEntryWithTheSalt(t *testing.T) {
+	k := testKDC(t)
+	_, kerr := k.AS(asRequest([]string{"preauth"}))
+	if kerr == nil {
+		t.Fatal("issued a ticket without preauth")
+	}
+	hints, err := wire.UnmarshalPADataSeq(kerr.EData)
+	if err != nil {
+		t.Fatalf("e-data: %v", err)
+	}
+	info, err := wire.UnmarshalETypeInfo2(hints[0].Value)
+	if err != nil {
+		t.Fatalf("PA-ETYPE-INFO2: %v", err)
+	}
+	if len(info) != 1 {
+		t.Fatalf("got %d entries, want 1", len(info))
+	}
+	want := int32(crypto.AES256CTSHMACSHA196)
+	if info[0].EType != want {
+		t.Errorf("etype is %d, want %d", info[0].EType, want)
+	}
+	if info[0].Salt == nil {
+		t.Fatal("no salt in the hint")
+	}
+	expect := string(crypto.Salt(testRealm, []string{"preauth"}))
+	if *info[0].Salt != expect {
+		t.Errorf("salt is %q, want %q", *info[0].Salt, expect)
+	}
+	// s2kparams absent means the 4096-iteration default.
+	if len(info[0].S2KParams) != 0 {
+		t.Errorf("s2kparams is % X", info[0].S2KParams)
+	}
+}
+
+// encTimestamp builds the PA-ENC-TIMESTAMP a client would send, using
+// the salt the hint named rather than one assumed here -- which is
+// what makes this a round trip and not two halves of the same
+// assumption.
+func encTimestamp(
+	t *testing.T,
+	k *KDC,
+	salt string,
+	e crypto.EncType,
+	at time.Time,
+) wire.PAData {
+	t.Helper()
+	p, err := crypto.Profile(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := p.StringToKey(userPassword, []byte(salt), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := wire.MarshalPAEncTSEnc(wire.PAEncTSEnc{
+		PATimestamp: at,
+		PAUSec:      123456,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := p.Encrypt(key, plain, crypto.UsageASReqPAEncTS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := wire.MarshalEncryptedData(wire.EncryptedData{
+		EType:  int32(e),
+		Cipher: ct,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire.PAData{
+		Type:  wire.PAEncTimestamp,
+		Value: value,
+	}
+}
+
+// hintSalt drives the first round trip and returns what the KDC asked
+// for.
+func hintSalt(t *testing.T, k *KDC) (string, crypto.EncType) {
+	t.Helper()
+	_, kerr := k.AS(asRequest([]string{"preauth"}))
+	if kerr == nil {
+		t.Fatal("issued a ticket without preauth")
+	}
+	hints, err := wire.UnmarshalPADataSeq(kerr.EData)
+	if err != nil {
+		t.Fatalf("e-data: %v", err)
+	}
+	info, err := wire.UnmarshalETypeInfo2(hints[0].Value)
+	if err != nil {
+		t.Fatalf("PA-ETYPE-INFO2: %v", err)
+	}
+	return *info[0].Salt, crypto.EncType(info[0].EType)
+}
+
+// The second round trip: the client answers the hint and gets a
+// ticket, which must be marked PRE-AUTHENT.
+func TestPreauthRoundTripSucceeds(t *testing.T) {
+	k := testKDC(t)
+	salt, e := hintSalt(t, k)
+
+	req := asRequest([]string{"preauth"})
+	req.PAData = []wire.PAData{
+		encTimestamp(t, k, salt, e, fixedNow),
+	}
+	rep, kerr := k.AS(req)
+	if kerr != nil {
+		t.Fatalf("AS refused a valid timestamp: %v", kerr)
+	}
+	enc := decodeReply(t, k, rep)
+	if !enc.Flags.Has(wire.FlagPreAuthent) {
+		t.Error("PreAuthent not set after a preauth exchange")
+	}
+	if !enc.Flags.Has(wire.FlagInitial) {
+		t.Error("Initial not set")
+	}
+}
+
+// A timestamp encrypted under the wrong key is a preauth failure, not
+// a ticket. This is the assertion that would pass vacuously if the
+// KDC never looked at the padata at all, so it also checks that the
+// successful case above was doing work.
+func TestPreauthRejectsTheWrongPassword(t *testing.T) {
+	k := testKDC(t)
+	salt, e := hintSalt(t, k)
+
+	req := asRequest([]string{"preauth"})
+	pa := encTimestamp(t, k, salt+"wrong", e, fixedNow)
+	req.PAData = []wire.PAData{pa}
+	_, kerr := k.AS(req)
+	if kerr == nil {
+		t.Fatal("accepted a timestamp under the wrong key")
+	}
+	if kerr.ErrorCode != wire.ErrCodePreauthFailed {
+		t.Errorf("code is %d, want %d", kerr.ErrorCode,
+			wire.ErrCodePreauthFailed)
+	}
+}
+
+// A timestamp that decrypts but names the wrong moment is a *skew*
+// error, not a preauth failure. The two are different protocol codes
+// because a client acts on them differently: skew is worth retrying
+// after resynchronising and a failure is not.
+func TestPreauthRejectsStaleTimestamps(t *testing.T) {
+	k := testKDC(t)
+	salt, e := hintSalt(t, k)
+
+	req := asRequest([]string{"preauth"})
+	stale := fixedNow.Add(-time.Hour)
+	req.PAData = []wire.PAData{
+		encTimestamp(t, k, salt, e, stale),
+	}
+	_, kerr := k.AS(req)
+	if kerr == nil {
+		t.Fatal("accepted an hour-old timestamp")
+	}
+	if kerr.ErrorCode != wire.ErrCodeSkew {
+		t.Errorf("code is %d, want %d", kerr.ErrorCode,
+			wire.ErrCodeSkew)
+	}
+}
+
+// A principal *without* the requirement gets a ticket in one round
+// trip and no padata travels in either direction. That is the
+// simplest and most deterministic exchange, which is why it is the
+// one the differential harness starts from.
+func TestNoPreauthMeansNoPAData(t *testing.T) {
+	k := testKDC(t)
+	rep, kerr := k.AS(asRequest([]string{"user"}))
+	if kerr != nil {
+		t.Fatalf("AS refused: %v", kerr)
+	}
+	if rep.PAData != nil {
+		t.Errorf("reply carries padata: %+v", rep.PAData)
+	}
+	enc := decodeReply(t, k, rep)
+	if enc.Flags.Has(wire.FlagPreAuthent) {
+		t.Error("PreAuthent set without preauth")
+	}
+}

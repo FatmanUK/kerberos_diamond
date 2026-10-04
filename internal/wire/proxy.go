@@ -45,8 +45,8 @@ func UnmarshalKDCProxyMessage(
 	b []byte) (KDCProxyMessage, error) {
 	var d derKDCProxyMessage
 	if _, err := asn1.Unmarshal(b, &d); err != nil {
-		return KDCProxyMessage{}, fmt.Errorf(
-			"KDC-PROXY-MESSAGE: %w", err)
+		return KDCProxyMessage{}, derErr(
+			"KDC-PROXY-MESSAGE", err)
 	}
 	domain, _, err := optCtxGstringValue(d.TargetDomain)
 	if err != nil {

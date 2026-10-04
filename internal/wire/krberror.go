@@ -30,6 +30,8 @@ const (
 	ErrCodeKeyExpired         int32 = 23
 	ErrCodePreauthFailed      int32 = 24
 	ErrCodePreauthRequired    int32 = 25
+	ErrCodeServerNoMatch      int32 = 26
+	ErrCodeMustUseUser2User   int32 = 27
 	ErrCodeSkew               int32 = 37
 	ErrCodeGeneric            int32 = 60
 )
@@ -113,7 +115,7 @@ func UnmarshalKRBError(b []byte) (KRBError, error) {
 	var d derKRBError
 	if _, err := asn1.UnmarshalWithParams(
 		b, &d, appParams(tagKRBError)); err != nil {
-		return KRBError{}, fmt.Errorf("KRB-ERROR: %w", err)
+		return KRBError{}, derErr("KRB-ERROR", err)
 	}
 	if err := checkPvno(d.Pvno); err != nil {
 		return KRBError{}, err
