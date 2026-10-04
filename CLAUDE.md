@@ -58,19 +58,23 @@ say so and cite the file and line.
 
 ## The golden-output harness
 
-**This does not exist yet.** It is the plan file's Step 2, and it is
-described here because everything else in this document assumes it.
+`internal/golden` is the oracle, and it works. `make golden-build` builds
+Kerberos 5 from the `kerberos` submodule into a container; `make golden` then
+drives the same request through that C KDC over TCP and through this project
+in process, decrypts both replies, and diffs the decoded messages. It also
+runs a stock, unpatched `kinit` from that image against this KDC through
+`cmd/kdiamond-proxy`.
 
-`internal/golden` will be the oracle. It builds a test realm, drives the same
-script through Kerberos 5 built from the `kerberos` submodule and through this
-project, and diffs the decoded messages. The C will run in a container over
-TCP; this project runs in-process.
+**Check against it rather than reasoning, wherever it can answer.** Reading
+the C is guesswork, and the harness has already proved the point: on its first
+run it found four divergences nobody had spotted by reading, and the stock
+`kinit` found a fifth that the field-by-field diff could not see, because the
+harness's own request did not provoke it. `BOOTSTRAP.md` §6 lists them.
 
-Reading the C and reasoning about it is guesswork; the harness answers
-directly. That is the whole reason it comes before the protocol code rather
-than after it.
+`make golden` needs Podman and a Postgres; it is deliberately not part of
+`make check` or CI, because the C build takes minutes.
 
-Two things known in advance about the diff, both from the C:
+Two things about the diff, both from the C, both load-bearing:
 
 - **Byte-exact comparison cannot work.** Every `krb5_c_encrypt` prepends a
   fresh random confounder (`lib/crypto/krb/enc_dk_hmac.c:144`), so every
@@ -79,4 +83,11 @@ Two things known in advance about the diff, both from the C:
 - **A case where both implementations fail identically passes while testing
   nothing.** Two KDCs both answering `KRB5KDC_ERR_C_PRINCIPAL_UNKNOWN` agree
   perfectly. Every case must assert the exchange *succeeded*, not merely that
-  the two sides matched.
+  the two sides matched. `decodeReply` refuses a KRB-ERROR outright and
+  `assertSucceeded` requires a session key, a server name, an end time after
+  the authtime and the initial flag; the one case that expects a refusal says
+  so and compares the hint a client has to act on.
+- **Agreement is not the same as correctness.** The two sides can match
+  perfectly on a message no real client accepts — that is exactly how the
+  RFC 6806 reply checksum was missed. The end-to-end `kinit` cases exist for
+  that reason and are not redundant with the diff.
