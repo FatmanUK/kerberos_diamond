@@ -1,0 +1,120 @@
+# Builds Kerberos 5 from the C sources, to serve as the oracle this
+# project is checked against.
+#
+# The build context is a checkout of the kerberos submodule, which the
+# Makefile produces with `git archive'. The submodule itself is never
+# built in place.
+
+FROM docker.io/library/debian:12-slim AS build
+
+# bison is not optional: kadmin/cli/getdate.y and
+# lib/krb5/krb/x-deltat.y ship with no generated .c, so without it
+# there is no kadmin.local and no libkrb5 at all.
+#
+# autoconf and m4 are needed because this release does not ship a
+# configure script -- see the generation step below.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential autoconf m4 bison perl python3 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+WORKDIR /src/src
+
+# This release ships configure.ac but not configure, and not
+# include/autoconf.h.in or util/reconf either, so both are generated
+# here.
+#
+# aclocal is deliberately NOT run, and neither is a bare `autoreconf
+# -i': aclocal.m4 is hand-maintained and checked in, and regenerating
+# it would discard Kerberos' own macros.
+RUN autoconf -f --include=. && autoheader --include=.
+
+# --with-tls-impl=no: the only part of Kerberos 5 that wants OpenSSL is
+# the k5tls plugin, which lets a *client* reach an https:// KDC. This
+# project's KDC is reached through kdiamond-proxy instead, so there is
+# no reason to link OpenSSL into the oracle at all. The flag is
+# explicit because the default, `auto', links libssl silently whenever
+# it happens to be installed -- and core crypto needs none of it,
+# defaulting to CRYPTO_IMPL=builtin.
+#
+# --disable-nls: no gettext, and so no locale-dependent message
+# strings to normalize out of a transcript.
+#
+# --disable-rpath: upstream's own build documentation recommends it, so
+# that the build tree cannot pick up an installed libkrb5 in place of
+# the one just built.
+#
+# The KDC lookaside cache is left at its default (enabled). It returns
+# a byte-identical cached reply for a repeated request within 120
+# seconds, which would be a trap for a differential harness -- but
+# every request carries a fresh random nonce, so two runs of the same
+# exchange never key to the same entry and the cache cannot fire.
+# Disabling it would diverge from a real KDC for no gain.
+#
+# --disable-pkinit: PKINIT needs OpenSSL, which this image does not
+# have, so the flag makes that explicit rather than letting configure
+# decide by probing.
+#
+# It does NOT stop the client trying to load the plugin:
+# lib/krb5/krb/preauth2.c:133 auto-registers "pkinit" as a dynamic
+# clpreauth module unconditionally, so the missing .so is reported in
+# every trace regardless of this flag. Suppressing that needs a
+# [plugins] clpreauth disable stanza, which realm-setup writes.
+RUN ./configure \
+        --prefix=/opt/krb5 \
+        --with-tls-impl=no \
+        --disable-pkinit \
+        --disable-nls \
+        --disable-rpath \
+    && make -j"$(nproc)" \
+    && make install
+
+FROM docker.io/library/debian:12-slim
+
+# No packages are installed here on purpose. Kerberos 5 builds and
+# installs its own libcom_err, libkrb5support and libverto into
+# /opt/krb5/lib, so the Debian copies would be both redundant and a
+# chance to link the wrong one; everything else these binaries need is
+# in libc, which the base image has. The start-up script needs only a
+# shell.
+COPY --from=build /opt/krb5 /opt/krb5
+ENV PATH=/opt/krb5/sbin:/opt/krb5/bin:$PATH \
+    LD_LIBRARY_PATH=/opt/krb5/lib
+
+COPY realm-setup.sh /usr/local/bin/realm-setup
+RUN chmod 0755 /usr/local/bin/realm-setup
+
+# The realm, the passwords and the port are all fixed by default, so
+# two runs of the oracle are the same realm with the same keys. A
+# golden fixture wants exactly that; it is the opposite of what a test
+# suite randomising its passwords wants.
+ENV KRB5_REALM=KDIAMOND.TEST \
+    KRB5_MASTER_PASSWORD=master \
+    KRB5_USER=user \
+    KRB5_USER_PASSWORD=userpassword \
+    KRB5_KDC_PORT=8088 \
+    KRB5_TESTDIR=/realm \
+    TZ=UTC \
+    LC_ALL=C
+
+# These must be image ENV rather than exports in the start-up script:
+# `podman exec' starts a process with the image's environment and does
+# not inherit the entrypoint's, so a client run that way would
+# otherwise miss the realm's configuration entirely and fall back to
+# DNS.
+#
+# LC_ALL and TZ above are here for the same reason, and matter because
+# klist formats times through localtime_r with a %c format -- without
+# both pinned, its output depends on the host's locale and timezone.
+ENV KRB5_CONFIG=/realm/krb5.conf \
+    KRB5_KDC_PROFILE=/realm/kdc.conf \
+    KRB5CCNAME=/realm/ccache \
+    KRB5_KTNAME=/realm/keytab \
+    KRB5RCACHEDIR=/realm
+
+EXPOSE 8088
+ENTRYPOINT ["/usr/local/bin/realm-setup"]
+CMD ["krb5kdc", "-n"]

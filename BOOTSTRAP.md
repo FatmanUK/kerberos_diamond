@@ -27,11 +27,18 @@ that have aged worst in the C:
 - **The skeleton is in**: `go.mod`, the package layout, both binaries, the
   `Makefile`, the container and deployment files, CI, and the formatting
   tool. `make check` is green.
-- **No Kerberos protocol code yet.** Every package but `internal/config`
-  holds a doc comment and nothing else, and both binaries refuse to run with
-  "not implemented yet" after loading their configuration.
+- **The C oracle works.** `make golden-build` builds Kerberos 5 from the
+  submodule into a container that creates its realm from nothing at start-up,
+  and `make golden` drives it: six tests pass, covering a KRB-ERROR to a
+  malformed frame, a padata-free single round trip, the PA-ENC-TIMESTAMP path,
+  TCP-only transport, a TGT in the credential cache, and a wrong password
+  being refused as a wrong password.
+- **No Kerberos protocol code of our own yet.** Every package but
+  `internal/config` and `internal/golden` holds a doc comment and nothing
+  else, and both binaries refuse to run with "not implemented yet" after
+  loading their configuration.
 - Planning is complete and the architecture in §3.2 and §3.3 is settled. §2
-  is the order of work; step 1 of it is done.
+  is the order of work; steps 1 and 2 of it are done.
 
 ## 2. Next Three Steps
 
@@ -41,16 +48,16 @@ and otherwise unmodified, obtaining a TGT from the Go KDC, with the golden
 harness proving the AS-REP matches the C KDC's field for field. It does not
 attempt the TGS exchange, kadmin, FAST or cross-realm.
 
-1. **The repository skeleton.** `go.mod`, the `Makefile`, the container and
-   deployment files, CI, and the package layout. No Kerberos logic.
-2. **The C oracle.** The container that builds Kerberos 5 from the submodule
-   and sets up a realm non-interactively. It depends on no Go at all, so it
-   comes before any protocol code and every later commit has a reference to
-   check against.
-3. **The protocol slice.** `internal/crypto` (two AES enctypes behind a
-   dispatch table), `internal/wire` (the ASN.1 the AS exchange touches),
-   `internal/store` (principals in Postgres), then the AS exchange itself and
-   the differential test.
+1. ~~The repository skeleton.~~ Done.
+2. ~~The C oracle.~~ Done.
+3. **The protocol slice**, in this order, because each needs the one before
+   it: `internal/crypto` (aes256- and aes128-cts-hmac-sha1-96 behind a
+   dispatch table, tested against the RFC 3962 vectors upstream already has
+   runnable in `lib/crypto/crypto_tests/`), `internal/wire` (the ASN.1 the AS
+   exchange touches, round-tripped against `tests/asn.1/reference_encode.out`),
+   `internal/store` (principals in Postgres, modelled on
+   `kadmin/dbutil/tabdump.c`'s relations), then the AS exchange and the
+   differential comparison.
 
 ## 3. Project State
 
@@ -115,6 +122,26 @@ are not "fixed" back by accident.
   exactly this. The loopback hop is cleartext, so a test using it
   demonstrates protocol interoperability, not that the client negotiated
   the TLS itself.
+- **The oracle's `configure` is generated, not shipped.** The pinned release
+  carries `configure.ac` but no `configure`, no `util/reconf` and no
+  `include/autoconf.h.in`, so the oracle image runs `autoconf -f --include=.`
+  and `autoheader --include=.` first. `aclocal` is deliberately not run and
+  neither is a bare `autoreconf -i`: `aclocal.m4` is hand-maintained and
+  checked in, and regenerating it would discard Kerberos' own macros. `bison`
+  is a hard build dependency, because `kadmin/cli/getdate.y` and
+  `lib/krb5/krb/x-deltat.y` ship with no generated `.c`.
+- **The KDC lookaside cache is left enabled** in the oracle, at upstream's
+  default. It returns a byte-identical cached reply for a repeated request
+  within 120 seconds, which reads like a trap for a differential harness —
+  but every request carries a fresh random nonce, so two runs of the same
+  exchange never key to the same entry and the cache cannot fire. Disabling
+  it would diverge from a real KDC for no gain.
+- **The oracle's realm is fixed, not generated.** Realm, passwords and key
+  version numbers are all constants, because the master key is *derived* —
+  `string_to_key` over the master password salted with `K/M@REALM` — so a
+  fixed password gives a reproducible master key and reproducible stored
+  keys. The realm is built at container start rather than baked into the
+  image, so each run begins from an identical database with no history.
 - **Argon2id passwords**, with legacy algorithms read but not written.
 - **New code says TLS, not SSL** — it's been TLS for over 20 years. Time to
   drop the SSL nomenclature (except where it would cause a problem).
@@ -126,6 +153,17 @@ are not "fixed" back by accident.
   schema goes in the connection string, not a `SET search_path`: GORM pools
   connections, so the SET reaches one of them and every other query lands in
   `public`.
+- **A published Podman port says nothing about the container being
+  ready.** Rootless Podman's port forwarder binds the host port as soon as the
+  container is created, so dialling it succeeds immediately and a request
+  arriving before the service is listening comes back as a connection reset.
+  Readiness must be established by a real request-and-reply, not a successful
+  dial. The oracle probes with the malformed frame its liveness test uses.
+- **`podman exec` does not inherit the entrypoint's environment.** It starts a
+  process with the *image's* ENV, so anything a start-up script exports is
+  invisible to a later `exec`. The oracle's client variables are therefore
+  image ENV; without that, `kinit` run through `exec` misses the realm
+  configuration and silently falls back to DNS.
 - **GPG signing times out regularly** (a gnome3 pinentry issue, not a code
   problem). The fix is always to retry the identical `git commit` once the
   user has unlocked the key. Never use `--no-gpg-sign`.
@@ -162,6 +200,7 @@ Most recent first.
 
 | Commit | Summary |
 |---|---|
+| `3510d19` | Add the repository skeleton |
 | `8ee600e` | Correct the record in the docs, and settle the transport |
 | `5b2cc58` | Add initial CLAUDE.md and BOOTSTRAP.md |
 | `02c5b04` | Add source submodule |
@@ -179,9 +218,13 @@ tests. It is green.
   missing variable rather than the first.
 - **Everything else** — not written, so not tested. The packages hold a
   doc comment and nothing else.
-- **The golden harness** does not exist. `make golden-build` and `make
-  golden` are wired up but `deploy/golden/Containerfile.krb5` has still to
-  be written, so neither works yet.
+- **`internal/golden`** — the oracle half is covered by six tests against the
+  real C KDC. They skip, rather than fail, when the image has not been built,
+  so `make check` stays green on a machine that has not spent four minutes
+  compiling Kerberos 5. `make golden` runs them for real.
+- **Nothing is compared yet.** The harness can drive the C KDC and read its
+  answers, but there is no Go KDC to put beside it, so `compare.go` and the
+  normalisation it needs arrive with the protocol slice.
 
 The 70-column rule is checked over the whole tree, not just a diff, and CI
 is not allowed to ignore it.

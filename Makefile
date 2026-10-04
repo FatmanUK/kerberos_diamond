@@ -330,7 +330,8 @@ golden-build: $(ORACLE_SRC)/src ## Build the C Kerberos 5 to compare against
 	@echo "staging $(ORACLE_SRC)..."
 	@rm -rf build/oracle && mkdir -p build/oracle
 	@git -C $(ORACLE_SRC) archive HEAD | tar -x -C build/oracle
-	@cp deploy/golden/Containerfile.krb5 build/oracle/
+	@cp deploy/golden/Containerfile.krb5 \
+		deploy/golden/realm-setup.sh build/oracle/
 	podman build -t $(ORACLE_IMAGE) \
 		-f build/oracle/Containerfile.krb5 build/oracle
 	@rm -rf build/oracle
