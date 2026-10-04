@@ -1,0 +1,3 @@
+[submodule "kerberos"]
+	path = kerberos
+	url = https://github.com/krb5/krb5.git
