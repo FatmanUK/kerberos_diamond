@@ -33,12 +33,17 @@ that have aged worst in the C:
   malformed frame, a padata-free single round trip, the PA-ENC-TIMESTAMP path,
   TCP-only transport, a TGT in the credential cache, and a wrong password
   being refused as a wrong password.
-- **No Kerberos protocol code of our own yet.** Every package but
-  `internal/config` and `internal/golden` holds a doc comment and nothing
+- **`internal/crypto` is done** for the two RFC 3962 AES types: the enctype
+  table, n-fold, DR/DK derivation, PBKDF2 string-to-key, AES-CTS, and the
+  HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
+  checked, and the default salt is cross-checked against what the C KDC
+  actually computes.
+- **No wire format, store or KDC yet.** `internal/wire`, `internal/store`,
+  `internal/kdc` and `internal/transport` hold a doc comment and nothing
   else, and both binaries refuse to run with "not implemented yet" after
   loading their configuration.
 - Planning is complete and the architecture in §3.2 and §3.3 is settled. §2
-  is the order of work; steps 1 and 2 of it are done.
+  is the order of work; steps 1 and 2 are done and step 3 is under way.
 
 ## 2. Next Three Steps
 
@@ -63,10 +68,26 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 ### 3.1 Key Logic
 
-- Nothing implemented yet. The first enctypes will be
-  `aes256-cts-hmac-sha1-96` and `aes128-cts-hmac-sha1-96` — what a stock
-  client negotiates by default — behind a dispatch table from the outset, so
-  later enctype families are rows rather than special cases.
+- **`aes256-cts-hmac-sha1-96` and `aes128-cts-hmac-sha1-96`** are
+  implemented, behind a dispatch table from the outset so later enctype
+  families are rows rather than special cases. `Profile(enctype)` is the only
+  way in; nothing calls a cipher directly.
+- **The single-block CTS quirk is load-bearing.** Upstream encrypts a
+  one-block message with plain CBC and a *forced zero IV*, discarding the
+  caller's (`lib/crypto/builtin/enc_provider/aes.c:253-261`). A derivation
+  constant is exactly one block, so the whole key-derivation path goes
+  through that case; a "tidier" implementation that honoured the IV would
+  derive different keys from every password.
+- **A PBKDF2 iteration count below the enctype default is refused**, not
+  honoured (`lib/crypto/krb/s2k_pbkdf2.c:116-126`). The count arrives from
+  the network in `s2kparams`, so without the floor a hostile KDC could talk a
+  client into a one-iteration derivation.
+- **The default salt has no separator**: realm followed by the name
+  components, concatenated (`lib/krb5/krb/pr_to_salt.c:36-67`). Principals
+  can therefore collide — realm `EXAMPLE.COM` name `ab` salts identically to
+  realm `EXAMPLE.COMa` name `b` — and that is simply how Kerberos salts.
+  Inserting a separator would disagree with every other implementation, and
+  would surface as "bad password" rather than as a salt fault.
 
 ### 3.2 Architecture
 
@@ -200,6 +221,8 @@ Most recent first.
 
 | Commit | Summary |
 |---|---|
+| `9729e0b` | Sweep oracle containers a killed test run leaves behind |
+| `82a0814` | Add the C oracle, and six tests that drive it |
 | `3510d19` | Add the repository skeleton |
 | `8ee600e` | Correct the record in the docs, and settle the transport |
 | `5b2cc58` | Add initial CLAUDE.md and BOOTSTRAP.md |
@@ -216,6 +239,19 @@ tests. It is green.
 - **`internal/config`** — covered. Defaults, empty-is-unset, whitespace-is-
   unset, the duration parse, and that a bad environment reports *every*
   missing variable rather than the first.
+- **`internal/crypto`** — covered, and anchored rather than
+  self-consistent. Every n-fold vector from `t_nfold.c`, every RFC 3962
+  appendix B string-to-key vector from `t_str2key.c`, all six AES Kc/Ke/Ki
+  derivations from `t_derive.c`, and both AES keyed-checksum vectors from
+  `t_cksums.c`. Plus the negative cases that a round-trip test cannot reach:
+  tampering, a wrong key usage, a truncated ciphertext, and a weak iteration
+  count.
+- **One gap, deliberate and recorded.** Multi-block AES-CTS is round-tripped
+  and checked against plain CBC with the final two blocks swapped, but is not
+  anchored to a published vector: upstream's `t_cts.c` prints its results
+  rather than asserting them, and says in its own header comment that it does
+  not even compile. The real check arrives with the AS exchange, when the C
+  client has to decrypt a reply this code encrypted.
 - **Everything else** — not written, so not tested. The packages hold a
   doc comment and nothing else.
 - **`internal/golden`** — the oracle half is covered by six tests against the
