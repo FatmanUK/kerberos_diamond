@@ -1,0 +1,18 @@
+# Built binaries.
+/kdiamond
+/kdiamond-proxy
+
+# Build and test output.
+/build/
+/coverage.out
+/coverage.html
+
+# TLS material. Never committed: a private key in a repository is a
+# private key everyone has, and `make certs' regenerates these in a
+# second. A deployment brings its own.
+/deploy/tls/*.pem
+
+# Editor and OS droppings.
+*.swp
+*~
+.DS_Store

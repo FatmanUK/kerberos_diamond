@@ -1,0 +1,42 @@
+name: Push
+
+on:
+  push:
+    branches:
+      - mother
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+        submodules: false
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.26.5'
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Build the container images
+      run: make pod-build pod-proxy-build
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Tag and push the KDC image
+      run: make pod-push

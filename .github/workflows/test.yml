@@ -1,0 +1,66 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - mother
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    # The store tests want Postgres. A service container is used rather
+    # than the Makefile's `db-up', so CI does not need Podman; `make
+    # test' honours KD_TEST_DATABASE_URL and skips starting one.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: kdiamond
+          POSTGRES_PASSWORD: kdiamond
+          POSTGRES_DB: kdiamond_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kdiamond"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+        # The kerberos submodule is only needed to build the oracle,
+        # which CI does not do: it is a full Kerberos 5 build.
+        submodules: false
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.26.5'
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Run go vet
+      run: make vet
+
+    - name: Check formatting
+      run: make fmt-check
+
+    # Over the whole tree, not just the diff, and not allowed to fail.
+    # The tree meets the rule, so there is nothing to grandfather.
+    - name: Check line width
+      run: make width-check
+
+    - name: Run tests
+      run: make test
+      env:
+        KD_TEST_DATABASE_URL: >-
+          postgres://kdiamond:kdiamond@localhost:5432/kdiamond_test?sslmode=disable

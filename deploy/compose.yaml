@@ -1,0 +1,60 @@
+# A local deployment: Postgres, the KDC, and the client-side proxy.
+#
+#   podman compose -f deploy/compose.yaml up -d
+#
+# The TLS material is not in the image and not in this file. Run
+# `make certs` first, or mount your own.
+name: kdiamond
+
+services:
+  db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_USER: kdiamond
+      POSTGRES_PASSWORD: kdiamond
+      POSTGRES_DB: kdiamond
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Not published to the host at all: only the KDC needs it, and it
+    # reaches it over the compose network by service name.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kdiamond"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  kdc:
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile
+      target: kdc
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      KD_DATABASE_URL: >-
+        postgres://kdiamond:kdiamond@db:5432/kdiamond?sslmode=disable
+      KD_REALM: KDIAMOND.TEST
+    ports:
+      - "8088:8088"
+    volumes:
+      - ../deploy/tls:/etc/kdiamond/tls:ro,z
+    command: ["serve"]
+
+  # Only needed by clients that cannot do TLS themselves. Bound to
+  # loopback because the hop into it is cleartext Kerberos.
+  proxy:
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile
+      target: proxy
+    depends_on:
+      - kdc
+    ports:
+      - "127.0.0.1:8089:8088"
+    command:
+      - "-listen=:8088"
+      - "-kdc=https://kdc:8088/KdcProxy"
+
+volumes:
+  pgdata:

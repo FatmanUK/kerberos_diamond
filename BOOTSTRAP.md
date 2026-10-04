@@ -24,11 +24,14 @@ that have aged worst in the C:
 
 ### Where it stands
 
-- **No Go in the tree yet** — no `go.mod`, no packages, nothing tested. The
-  repository holds this file, `CLAUDE.md`, `.gitmodules` and the `kerberos/`
-  submodule.
+- **The skeleton is in**: `go.mod`, the package layout, both binaries, the
+  `Makefile`, the container and deployment files, CI, and the formatting
+  tool. `make check` is green.
+- **No Kerberos protocol code yet.** Every package but `internal/config`
+  holds a doc comment and nothing else, and both binaries refuse to run with
+  "not implemented yet" after loading their configuration.
 - Planning is complete and the architecture in §3.2 and §3.3 is settled. §2
-  is the order of work.
+  is the order of work; step 1 of it is done.
 
 ## 2. Next Three Steps
 
@@ -60,7 +63,7 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 ### 3.2 Architecture
 
-Decided, not yet built.
+The layout exists; all but `internal/config` is still empty.
 
 - **Packages**: `internal/config` (12-factor env), `internal/store`
   (Postgres/GORM), `internal/wire` (ASN.1/DER), `internal/crypto` (RFC
@@ -68,6 +71,14 @@ Decided, not yet built.
   listener), `internal/golden` (the harness).
 - **Binaries**: `cmd/kdiamond`, the KDC daemon, and `cmd/kdiamond-proxy`, the
   client-side KKDCP shim described in §3.3.
+- **Configuration is environment-only.** Every setting is a `KD_`-prefixed
+  variable: no configuration file, no flag that persists anything, nothing
+  read from the database at startup. `internal/config` reports *all* of a
+  bad environment's faults at once, because reporting the first costs one
+  restart per mistake.
+- **Tools**: `tools/reflow` rewraps comment paragraphs to 70 columns.
+  `gofmt` does not wrap, so the rule in `CLAUDE.md` is otherwise
+  unenforceable; `make fmt` runs gofmt, reflow, then gofmt again.
 
 ### 3.3 Decisions
 
@@ -121,14 +132,21 @@ are not "fixed" back by accident.
 
 ## 4. Dependency Map
 
-**There is no `go.mod` yet.** This section is the *intended* dependency set,
-not a reading of the tree.
+**`go.mod` requires nothing yet**, because nothing imports anything yet. The
+modules below are the *intended* set and are added as the code that needs
+them lands — a `require` for an unimported module is one `go mod tidy` away
+from deletion, so listing them early would not survive.
 
-**External Go modules** (`go.mod`):
+**External Go modules** (intended):
 
-- `golang.org/x/crypto` — Argon2id
+- `golang.org/x/crypto` — Argon2id, when §3.3's password work lands
 - `gorm.io/gorm` + `gorm.io/driver/postgres` (+ transitive `jackc/pgx`,
   `pgpassfile`, `pgservicefile`, `puddle`) — persistence
+
+The standard library covers more of this than it might seem:
+`encoding/asn1` for the wire types, `crypto/aes`, `crypto/hmac`,
+`crypto/sha1` and `crypto/pbkdf2` for the RFC 3962 enctypes, `crypto/tls`
+for the transport, and `net/http` for the KKDCP listener.
 
 **External non-Go dependency**:
 
@@ -144,6 +162,7 @@ Most recent first.
 
 | Commit | Summary |
 |---|---|
+| `8ee600e` | Correct the record in the docs, and settle the transport |
 | `5b2cc58` | Add initial CLAUDE.md and BOOTSTRAP.md |
 | `02c5b04` | Add source submodule |
 
@@ -152,4 +171,17 @@ into `mother`; they are read-only reference.
 
 ## 6. Testing Status
 
-Nothing tested yet.
+`make check` runs `go vet`, the formatting check, the 70-column check and the
+tests. It is green.
+
+- **`internal/config`** — covered. Defaults, empty-is-unset, whitespace-is-
+  unset, the duration parse, and that a bad environment reports *every*
+  missing variable rather than the first.
+- **Everything else** — not written, so not tested. The packages hold a
+  doc comment and nothing else.
+- **The golden harness** does not exist. `make golden-build` and `make
+  golden` are wired up but `deploy/golden/Containerfile.krb5` has still to
+  be written, so neither works yet.
+
+The 70-column rule is checked over the whole tree, not just a diff, and CI
+is not allowed to ignore it.

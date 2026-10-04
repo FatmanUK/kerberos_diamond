@@ -1,0 +1,64 @@
+# Build static binaries, then ship them on a distroless base.
+#
+# Two targets share one build stage. The default is the KDC:
+#   podman build -t kdiamond -f deploy/Containerfile .
+# The client-side proxy is its own image:
+#   podman build --target proxy -t kdiamond-proxy \
+#       -f deploy/Containerfile .
+
+FROM docker.io/library/golang:1.26-alpine AS build
+WORKDIR /src
+
+# Cache dependencies separately from the source tree. go.sum is matched
+# as a pattern so the build works before there is one.
+COPY go.mod go.su[m] ./
+RUN go mod download
+
+COPY . .
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath \
+        -ldflags "-s -w -X main.version=${VERSION}" \
+        -o /out/kdiamond ./cmd/kdiamond
+RUN CGO_ENABLED=0 go build -trimpath \
+        -ldflags "-s -w -X main.version=${VERSION}" \
+        -o /out/kdiamond-proxy ./cmd/kdiamond-proxy
+
+FROM gcr.io/distroless/static-debian12:nonroot AS kdc
+COPY --from=build /out/kdiamond /usr/bin/kdiamond
+
+# TLS material and the database live outside the image.
+VOLUME ["/etc/kdiamond/tls"]
+
+ENV KD_TLS_CERT_FILE=/etc/kdiamond/tls/cert.pem \
+    KD_TLS_KEY_FILE=/etc/kdiamond/tls/key.pem \
+    KD_LISTEN_ADDR=:8088 \
+    KD_PROXY_PATH=KdcProxy
+
+# 8088, not Kerberos' assigned 88: the process runs unprivileged and so
+# cannot bind a low port, and under KKDCP the KDC is named by URL, so
+# the port is the publisher's choice rather than the protocol's.
+EXPOSE 8088
+USER nonroot:nonroot
+
+# SIGTERM is enough. The architecture is crash-only: there is no
+# orderly save to interrupt, so nothing needs a STOPSIGNAL override or
+# a grace period.
+ENTRYPOINT ["/usr/bin/kdiamond"]
+CMD ["serve"]
+
+# The client-side proxy, for clients built without a TLS module of
+# their own. A separate image rather than a second command on the KDC's,
+# because it belongs on a different host: it runs beside the client,
+# not beside the KDC.
+FROM gcr.io/distroless/static-debian12:nonroot AS proxy
+COPY --from=build /out/kdiamond-proxy /usr/bin/kdiamond-proxy
+
+# It listens on every interface inside the container, because that is
+# the only way the port can be published at all. What keeps it private
+# is where the port is bound on the host; compose.yaml binds it to
+# loopback. The hop into it is cleartext Kerberos, so it must not be
+# reachable from anywhere but the client.
+EXPOSE 8088
+USER nonroot:nonroot
+
+ENTRYPOINT ["/usr/bin/kdiamond-proxy"]
