@@ -116,8 +116,13 @@ func (k *KDC) encTicketPart(s *asState) ([]byte, error) {
 // comment there calls the leftover fields "a courtesy". A Go KDC that
 // filled the field in would differ from every MIT reply in existence.
 func (k *KDC) encPart(s *asState) (*wire.EncryptedData, error) {
+	encPA, err := k.encPAData(s)
+	if err != nil {
+		return nil, err
+	}
 	plain, err := wire.MarshalEncASRepPart(wire.EncKDCRepPart{
-		Key: s.session,
+		Key:       s.session,
+		EncPAData: encPA,
 		// last-req is a stub upstream: one constant
 		// {KRB5_LRQ_NONE, 0} entry (kdc/kdc_util.c:677-688).
 		// Implementing it properly would diverge immediately.
@@ -162,4 +167,49 @@ func keyExpiry(s *asState) uint32 {
 		return exp
 	}
 	return tsMin(exp, pw)
+}
+
+// encPAData is the reply's *encrypted* padata.
+//
+// It carries the RFC 6806 reply checksum, and only when the client
+// asked for one by sending an empty PA-REQ-ENC-PA-REP
+// (kdc_handle_protected_negotiation, kdc/kdc_util.c:1768-1807). The
+// checksum is over the request bytes as received, keyed with the
+// reply key under key usage 56.
+//
+// This is not optional in practice. get_ticket_flags sets
+// TKT_FLG_ENC_PA_REP on every ticket, and a client that sees that
+// flag *demands* the checksum and rejects the reply with
+// KRB5_KDCREP_MODIFIED if it is missing (krb5int_fast_verify_nego,
+// lib/krb5/krb/fast.c:635-673). A KDC that set the flag and sent no
+// checksum would be refused by every MIT client while looking
+// entirely correct in a field-by-field diff against a request that
+// did not ask for one.
+//
+// Upstream also adds an empty PA-FX-FAST here, which is what makes a
+// client report "FAST negotiation: available". This does not: FAST is
+// not implemented, and advertising it would have the client record
+// availability it cannot use.
+func (k *KDC) encPAData(s *asState) ([]wire.PAData, error) {
+	if findPAData(s.req.PAData, wire.PAReqEncPARep) == nil {
+		return nil, nil
+	}
+	p, err := crypto.Profile(s.clientEType)
+	if err != nil {
+		return nil, err
+	}
+	sum, err := p.Checksum(s.clientKey, s.raw, crypto.UsageASReq)
+	if err != nil {
+		return nil, err
+	}
+	der, err := wire.MarshalChecksum(wire.Checksum{
+		Type:     int32(p.RequiredCksum),
+		Checksum: sum,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []wire.PAData{
+		{Type: wire.PAReqEncPARep, Value: der},
+	}, nil
 }

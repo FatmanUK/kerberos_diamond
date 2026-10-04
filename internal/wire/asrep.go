@@ -83,9 +83,16 @@ type EncKDCRepPart struct {
 	SRealm string
 	SName  PrincipalName
 
-	// CAddr and EncPAData pass through as raw DER.
-	CAddr     asn1.RawValue
-	EncPAData asn1.RawValue
+	// CAddr passes through as raw DER; the AS exchange issues
+	// none.
+	CAddr asn1.RawValue
+
+	// EncPAData is the *encrypted* padata, distinct from the
+	// AS-REP's cleartext padata. RFC 6806's reply checksum
+	// travels here, and a client that asked for one refuses the
+	// reply without it (krb5int_fast_verify_nego,
+	// lib/krb5/krb/fast.c :635-673).
+	EncPAData []PAData
 }
 
 type derEncKDCRepPart struct {
@@ -108,7 +115,7 @@ type derEncKDCRepPart struct {
 	SName  derPrincipalName `asn1:"explicit,tag:10"`
 
 	CAddr     asn1.RawValue `asn1:"explicit,optional,tag:11"`
-	EncPAData asn1.RawValue `asn1:"explicit,optional,tag:12"`
+	EncPAData []derPAData   `asn1:"explicit,optional,tag:12"`
 }
 
 // errEmptyLastReq rejects a reply carrying no last-req entries.
@@ -232,7 +239,7 @@ func (e EncKDCRepPart) der() (derEncKDCRepPart, error) {
 		SRealm:    ctxGstring(9, e.SRealm),
 		SName:     e.SName.der(),
 		CAddr:     e.CAddr,
-		EncPAData: e.EncPAData,
+		EncPAData: paDataDER(e.EncPAData),
 	}, nil
 }
 
@@ -262,7 +269,7 @@ func (d derEncKDCRepPart) value() (EncKDCRepPart, error) {
 		SRealm:        srealm,
 		SName:         sname,
 		CAddr:         d.CAddr,
-		EncPAData:     d.EncPAData,
+		EncPAData:     paDataValues(d.EncPAData),
 	}, nil
 }
 

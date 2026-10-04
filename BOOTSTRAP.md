@@ -38,12 +38,16 @@ that have aged worst in the C:
   HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
   checked, and the default salt is cross-checked against what the C KDC
   actually computes.
-- **The vertical slice is closed.** `internal/kdc` answers an AS-REQ,
-  `internal/transport` carries it over MS-KKDCP on HTTPS, and both binaries
-  run. The golden harness drives one encoded AS-REQ through the C KDC in a
-  container and through the Go KDC in process, decrypts *both* halves of
-  each reply, and compares them field by field — and they match, including
-  the EncTicketPart that only the krbtgt key opens.
+- **The vertical slice is closed, and a stock `kinit` proves it.** An
+  unmodified `kinit` built from the `kerberos/` submodule obtains a TGT from
+  the Go KDC through `kdiamond-proxy`, on both the padata-free and the
+  PA-ENC-TIMESTAMP path, and `klist` lists it. Nothing about the client is
+  patched. That is the only evidence in the project that
+  "behaviour-compatible" means anything in practice.
+- **The golden harness also compares the messages.** One encoded AS-REQ goes
+  to the C KDC in a container and to the Go KDC in process; both replies are
+  decrypted — including the EncTicketPart that only the krbtgt key opens —
+  and compared field by field. They match.
 - **`internal/store` is done** for what the AS exchange needs: the schema,
   principal lookup, the stored-key blob layout, the kvno/enctype key search
   ported from `krb5_dbe_def_search_enctype`, and `SetPassword` for
@@ -78,15 +82,10 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 **What is next, in the plan file's order:**
 
-1. **The end-to-end check.** A stock `kinit` built from the submodule, driven
-   through `kdiamond-proxy` at the Go KDC. The field-by-field comparison is
-   stronger evidence about the *messages*; an unmodified client getting a TGT
-   is the only evidence that "behaviour-compatible" means anything in
-   practice.
-2. **The TGS exchange.** The slice above gets a TGT and nothing yet spends
+1. **The TGS exchange.** The slice above gets a TGT and nothing yet spends
    it. TGS reuses the whole of `internal/wire` and `internal/crypto` and adds
    ticket validation, so it is the cheapest large gain available.
-3. **The remaining enctypes**, aes-sha2 (RFC 8009) first, because its
+2. **The remaining enctypes**, aes-sha2 (RFC 8009) first, because its
    KDF-HMAC-SHA2 derivation is a genuinely different scheme and will prove
    the enctype dispatch table is a table and not a special case.
 
@@ -374,6 +373,18 @@ tests. It is green.
   real C KDC. They skip, rather than fail, when the image has not been built,
   so `make check` stays green on a machine that has not spent four minutes
   compiling Kerberos 5. `make golden` runs them for real.
+- **End to end, with a real client.** `make golden` runs a stock `kinit` from
+  the oracle image against the Go KDC through the shim, for a principal with
+  no preauth requirement and for one with it, and checks `klist` lists the
+  TGT. A wrong password is refused, and the refusal's *reason* is asserted —
+  a non-zero exit alone would also be what a client that could not reach the
+  KDC produced. Each case reads the client's own trace to confirm it dialled
+  the shim and not the C KDC sharing its container.
+- **What the end-to-end check does not cover.** The client-to-shim hop is
+  cleartext, so the TLS leg is exercised by `kdiamond-proxy` and not by the
+  client. A client built *with* a TLS module reaches the KDC's HTTPS listener
+  directly; until one is available, that half is covered only by
+  `internal/transport`'s own tests, which do use real TLS.
 - **`internal/kdc` and `internal/transport`** — covered. The reply is opened
   with the key a client derives from the password and the ticket with the
   krbtgt's, then the two halves are compared against each other. The preauth

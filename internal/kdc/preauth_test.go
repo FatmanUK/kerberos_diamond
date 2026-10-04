@@ -12,7 +12,7 @@ import (
 // to send, which is the whole of the two-round-trip handshake.
 func TestPreauthRequiredCarriesAHint(t *testing.T) {
 	k := testKDC(t)
-	_, kerr := k.AS(asRequest([]string{"preauth"}))
+	_, kerr := as(t, k, asRequest([]string{"preauth"}))
 	if kerr == nil {
 		t.Fatal("issued a ticket without preauth")
 	}
@@ -46,7 +46,7 @@ func TestPreauthRequiredCarriesAHint(t *testing.T) {
 // client key (kdc/kdc_preauth.c:1046-1069).
 func TestETypeInfo2HasOneEntryWithTheSalt(t *testing.T) {
 	k := testKDC(t)
-	_, kerr := k.AS(asRequest([]string{"preauth"}))
+	_, kerr := as(t, k, asRequest([]string{"preauth"}))
 	if kerr == nil {
 		t.Fatal("issued a ticket without preauth")
 	}
@@ -126,7 +126,7 @@ func encTimestamp(
 // for.
 func hintSalt(t *testing.T, k *KDC) (string, crypto.EncType) {
 	t.Helper()
-	_, kerr := k.AS(asRequest([]string{"preauth"}))
+	_, kerr := as(t, k, asRequest([]string{"preauth"}))
 	if kerr == nil {
 		t.Fatal("issued a ticket without preauth")
 	}
@@ -151,7 +151,7 @@ func TestPreauthRoundTripSucceeds(t *testing.T) {
 	req.PAData = []wire.PAData{
 		encTimestamp(t, k, salt, e, fixedNow),
 	}
-	rep, kerr := k.AS(req)
+	rep, kerr := as(t, k, req)
 	if kerr != nil {
 		t.Fatalf("AS refused a valid timestamp: %v", kerr)
 	}
@@ -175,7 +175,7 @@ func TestPreauthRejectsTheWrongPassword(t *testing.T) {
 	req := asRequest([]string{"preauth"})
 	pa := encTimestamp(t, k, salt+"wrong", e, fixedNow)
 	req.PAData = []wire.PAData{pa}
-	_, kerr := k.AS(req)
+	_, kerr := as(t, k, req)
 	if kerr == nil {
 		t.Fatal("accepted a timestamp under the wrong key")
 	}
@@ -198,7 +198,7 @@ func TestPreauthRejectsStaleTimestamps(t *testing.T) {
 	req.PAData = []wire.PAData{
 		encTimestamp(t, k, salt, e, stale),
 	}
-	_, kerr := k.AS(req)
+	_, kerr := as(t, k, req)
 	if kerr == nil {
 		t.Fatal("accepted an hour-old timestamp")
 	}
@@ -220,7 +220,7 @@ func TestPreauthRejectsStaleTimestamps(t *testing.T) {
 // harness caught it.
 func TestNoPreauthStillSendsETypeInfo2(t *testing.T) {
 	k := testKDC(t)
-	rep, kerr := k.AS(asRequest([]string{"user"}))
+	rep, kerr := as(t, k, asRequest([]string{"user"}))
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
@@ -251,7 +251,7 @@ func TestNoPreauthStillSendsETypeInfo2(t *testing.T) {
 // request this KDC can answer never qualifies.
 func TestNoPWSalt(t *testing.T) {
 	k := testKDC(t)
-	rep, kerr := k.AS(asRequest([]string{"user"}))
+	rep, kerr := as(t, k, asRequest([]string{"user"}))
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}

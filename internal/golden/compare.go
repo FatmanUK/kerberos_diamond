@@ -192,8 +192,7 @@ func normalizeEnc(
 	f.set("enc.srealm", scrub(e.SRealm, realm))
 	f.set("enc.sname", scrubName(e.SName, realm))
 	f.set("enc.caddr", rawPresence(len(e.CAddr.FullBytes)))
-	f.set("enc.enc-padata",
-		rawPresence(len(e.EncPAData.FullBytes)))
+	f.set("enc.enc-padata", padataSummary(e.EncPAData))
 }
 
 // offset renders a timestamp relative to the exchange's authtime.

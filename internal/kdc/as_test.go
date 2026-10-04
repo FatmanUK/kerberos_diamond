@@ -171,6 +171,22 @@ func asRequest(components []string) wire.ASReq {
 	}}
 }
 
+// as marshals a request and answers it, which is what a real caller
+// does: the reply checksum is over the encoded bytes, so handing the
+// KDC only the decoded structure would skip it.
+func as(
+	t *testing.T,
+	k *KDC,
+	req wire.ASReq,
+) (*wire.ASRep, *wire.KRBError) {
+	t.Helper()
+	msg, err := wire.MarshalASReq(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k.AS(msg, req)
+}
+
 // clientKey derives what a client would hold for a principal.
 func clientKey(
 	t *testing.T,
@@ -197,7 +213,7 @@ func clientKey(
 // once.
 func TestASReplyOpensWithTheClientKey(t *testing.T) {
 	k := testKDC(t)
-	rep, kerr := k.AS(asRequest([]string{"user"}))
+	rep, kerr := as(t, k, asRequest([]string{"user"}))
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
@@ -236,7 +252,7 @@ func TestASReplyOpensWithTheClientKey(t *testing.T) {
 // the two halves would issue a ticket no service could reconcile.
 func TestTicketAgreesWithTheReply(t *testing.T) {
 	k := testKDC(t)
-	rep, kerr := k.AS(asRequest([]string{"user"}))
+	rep, kerr := as(t, k, asRequest([]string{"user"}))
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
@@ -268,7 +284,7 @@ func TestTicketAgreesWithTheReply(t *testing.T) {
 // (kdc/kdc_util.c:823).
 func TestASTicketFlags(t *testing.T) {
 	k := testKDC(t)
-	rep, kerr := k.AS(asRequest([]string{"user"}))
+	rep, kerr := as(t, k, asRequest([]string{"user"}))
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
@@ -303,7 +319,7 @@ func TestASTicketFlags(t *testing.T) {
 func TestASTimes(t *testing.T) {
 	k := testKDC(t)
 	req := asRequest([]string{"user"})
-	rep, kerr := k.AS(req)
+	rep, kerr := as(t, k, req)
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
@@ -331,7 +347,7 @@ func TestASTimes(t *testing.T) {
 // issued -- the case kdc_get_ticket_renewtime:1750-1753 exists for.
 func TestRenewableOKDeclinesWhenItWouldNotHelp(t *testing.T) {
 	k := testKDC(t)
-	rep, kerr := k.AS(asRequest([]string{"user"}))
+	rep, kerr := as(t, k, asRequest([]string{"user"}))
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
@@ -357,7 +373,7 @@ func TestRenewableIssuesARenewableTicket(t *testing.T) {
 	req := asRequest([]string{"user"})
 	req.Body.Options |= wire.OptRenewable
 	req.Body.RTime = fixedNow.Add(3 * 24 * time.Hour)
-	rep, kerr := k.AS(req)
+	rep, kerr := as(t, k, req)
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
@@ -387,7 +403,7 @@ func TestRenewableLifeDefaultsToZero(t *testing.T) {
 	req := asRequest([]string{"user"})
 	req.Body.Options |= wire.OptRenewable
 	req.Body.RTime = fixedNow.Add(7 * 24 * time.Hour)
-	rep, kerr := k.AS(req)
+	rep, kerr := as(t, k, req)
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
@@ -424,7 +440,7 @@ func setRenewableLife(t *testing.T, k *KDC, d time.Duration) {
 func TestUnknownClientAndServer(t *testing.T) {
 	k := testKDC(t)
 	req := asRequest([]string{"nobody"})
-	_, kerr := k.AS(req)
+	_, kerr := as(t, k, req)
 	if kerr == nil {
 		t.Fatal("issued a ticket to an unknown client")
 	}
@@ -437,7 +453,7 @@ func TestUnknownClientAndServer(t *testing.T) {
 	req.Body.SName = &wire.PrincipalName{
 		Components: []string{"nosuch", "service"},
 	}
-	_, kerr = k.AS(req)
+	_, kerr = as(t, k, req)
 	if kerr == nil {
 		t.Fatal("issued a ticket for an unknown service")
 	}
@@ -453,7 +469,7 @@ func TestTGSOnlyOptionsAreRefused(t *testing.T) {
 	k := testKDC(t)
 	req := asRequest([]string{"user"})
 	req.Body.Options |= wire.OptRenew
-	_, kerr := k.AS(req)
+	_, kerr := as(t, k, req)
 	if kerr == nil {
 		t.Fatal("accepted a TGS-only option")
 	}
@@ -470,7 +486,7 @@ func TestNoUsableClientKey(t *testing.T) {
 	k := testKDC(t)
 	req := asRequest([]string{"user"})
 	req.Body.EType = []int32{23} // rc4-hmac
-	_, kerr := k.AS(req)
+	_, kerr := as(t, k, req)
 	if kerr == nil {
 		t.Fatal("found a key for an unsupported enctype")
 	}

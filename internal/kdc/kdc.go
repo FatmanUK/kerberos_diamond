@@ -88,7 +88,7 @@ func (k *KDC) Handle(msg []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotARequest, err)
 	}
-	rep, kerr := k.AS(req)
+	rep, kerr := k.AS(msg, req)
 	if kerr != nil {
 		return wire.MarshalKRBError(*kerr)
 	}

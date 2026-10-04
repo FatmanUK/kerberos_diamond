@@ -161,21 +161,26 @@ func decrypt(
 	return plain
 }
 
-// diamond starts a Go KDC whose clock is pinned to the C KDC's
-// authtime.
+// pinned is a clock that always reads the same moment.
+func pinned(at time.Time) func() time.Time {
+	return func() time.Time { return at }
+}
+
+// diamond starts a Go KDC on the given clock.
 //
-// Pinning it is what makes the end times comparable: both sides are
-// asked for the same absolute till, so with the same authtime the
-// offset from authtime to endtime is identical. Without it the two
-// differ by however long the first exchange took.
+// The differential cases pin it to the C KDC's authtime, and that is
+// what makes the end times comparable: both sides are asked for the
+// same absolute till, so with the same authtime the offset from
+// authtime to endtime is identical. Without it the two differ by
+// however long the first exchange took. The end-to-end cases use a
+// live clock, because a real client checks the reply against its own.
 func diamond(
 	t *testing.T,
 	schema string,
-	authTime time.Time,
+	now func() time.Time,
 ) *Diamond {
 	t.Helper()
-	d, err := StartDiamond(context.Background(), schema,
-		func() time.Time { return authTime })
+	d, err := StartDiamond(context.Background(), schema, now)
 	if err != nil {
 		t.Skipf("no Go KDC: %v", err)
 	}
@@ -208,7 +213,7 @@ func TestASExchangeMatchesTheC(t *testing.T) {
 	}
 	cx := open(t, cRaw, UserPassword, []string{UserName})
 
-	d := diamond(t, "kd_golden_as", cx.Enc.AuthTime)
+	d := diamond(t, "kd_golden_as", pinned(cx.Enc.AuthTime))
 	goRaw, err := d.AS(req)
 	if err != nil {
 		t.Fatalf("asking the Go KDC: %v", err)
@@ -336,7 +341,7 @@ func TestPreauthRefusalMatchesTheC(t *testing.T) {
 	}
 	cErr := refusal(t, cRaw)
 
-	d := diamond(t, "kd_golden_preauth", cErr.STime)
+	d := diamond(t, "kd_golden_preauth", pinned(cErr.STime))
 	goRaw, err := d.AS(req)
 	if err != nil {
 		t.Fatalf("asking the Go KDC: %v", err)

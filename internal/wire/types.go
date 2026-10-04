@@ -125,6 +125,34 @@ type derEncryptionKey struct {
 	KeyValue []byte `asn1:"explicit,tag:1"`
 }
 
+// Checksum is a keyed or unkeyed checksum.
+type Checksum struct {
+	Type     int32
+	Checksum []byte
+}
+
+type derChecksum struct {
+	Type     int32  `asn1:"explicit,tag:0"`
+	Checksum []byte `asn1:"explicit,tag:1"`
+}
+
+// MarshalChecksum encodes a standalone Checksum, which is how the RFC
+// 6806 reply checksum travels inside a PA-REQ-ENC-PA-REP.
+func MarshalChecksum(c Checksum) ([]byte, error) {
+	return asn1.Marshal(derChecksum{
+		Type: c.Type, Checksum: c.Checksum,
+	})
+}
+
+// UnmarshalChecksum decodes a standalone Checksum.
+func UnmarshalChecksum(b []byte) (Checksum, error) {
+	var d derChecksum
+	if _, err := asn1.Unmarshal(b, &d); err != nil {
+		return Checksum{}, derErr("Checksum", err)
+	}
+	return Checksum{Type: d.Type, Checksum: d.Checksum}, nil
+}
+
 // PAData is one pre-authentication item.
 type PAData struct {
 	Type  int32

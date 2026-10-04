@@ -25,4 +25,10 @@ const (
 	// the client's long-term key (or, under FAST, a key
 	// strengthened from it).
 	UsageASRepEncPart Usage = 3
+
+	// UsageASReq keys the checksum a KDC puts in the reply's
+	// encrypted padata when the client asked for one (RFC 6806).
+	// It is 56, far from the others, and is listed separately in
+	// the header for that reason (krb5.hin:1000).
+	UsageASReq Usage = 56
 )

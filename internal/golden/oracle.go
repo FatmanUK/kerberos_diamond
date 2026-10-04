@@ -84,9 +84,16 @@ func startOracle(ctx context.Context) (*Oracle, error) {
 	// is also removed explicitly, in case the KDC does not exit.
 	publish := fmt.Sprintf(
 		"127.0.0.1:%d:%d", port, oraclePort)
+	// host.containers.internal is added so that a client inside
+	// the container can reach a listener on the host. That is the
+	// direction the end-to-end check needs -- the C client
+	// dialling the Go KDC's shim -- and it is not the direction a
+	// published port covers.
 	run := exec.CommandContext(ctx, "podman", "run", "--rm", "-d",
 		"--name", name,
 		"--label", oracleLabel,
+		"--add-host",
+		"host.containers.internal:host-gateway",
 		"-p", publish,
 		OracleImage,
 	)
@@ -94,18 +101,25 @@ func startOracle(ctx context.Context) (*Oracle, error) {
 		return nil, fmt.Errorf(
 			"starting the oracle: %v: %s", err, out)
 	}
-
 	o := &Oracle{
 		Addr: fmt.Sprintf("127.0.0.1:%d", port),
 		name: name,
 	}
+	return o, o.ready(ctx)
+}
+
+// ready waits for the KDC and folds the container's log into the
+// error if it never answers. That failure path is the reason this is
+// worth having: without the log, a realm that failed to build looks
+// exactly like a port that was never published.
+func (o *Oracle) ready(ctx context.Context) error {
 	if err := o.waitUntilUp(ctx); err != nil {
 		logs, _ := exec.Command(
-			"podman", "logs", name).CombinedOutput()
+			"podman", "logs", o.name).CombinedOutput()
 		o.stop()
-		return nil, fmt.Errorf("%w (logs: %s)", err, logs)
+		return fmt.Errorf("%w (logs: %s)", err, logs)
 	}
-	return o, nil
+	return nil
 }
 
 // oracleLabel marks every container this harness starts, so a stale
@@ -197,6 +211,53 @@ func (o *Oracle) Exec(
 	full := append([]string{"exec", o.name}, args...)
 	out, err := exec.CommandContext(
 		ctx, "podman", full...).CombinedOutput()
+	return string(out), err
+}
+
+// HostAlias is the name a process inside the container uses to reach
+// a listener on the host.
+const HostAlias = "host.containers.internal"
+
+// WriteFile puts a file inside the container.
+//
+// It goes through the shell rather than `podman cp' because the
+// content is small, generated, and wanted at a path the image does
+// not have -- and because a heredoc is one call rather than a
+// temporary file on the host plus a copy.
+func (o *Oracle) WriteFile(
+	ctx context.Context,
+	path, content string,
+) error {
+	cmd := exec.CommandContext(ctx, "podman", "exec", "-i",
+		o.name, "sh", "-c", "cat > "+path)
+	cmd.Stdin = strings.NewReader(content)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("writing %s: %v: %s",
+			path, err, out)
+	}
+	return nil
+}
+
+// ExecEnv runs a command inside the container with extra environment.
+//
+// podman exec starts a process with the *image's* environment and
+// does not inherit the entrypoint's, so anything the start-up script
+// exported has to be passed again here.
+func (o *Oracle) ExecEnv(
+	ctx context.Context,
+	env []string,
+	stdin string,
+	args ...string,
+) (string, error) {
+	full := []string{"exec", "-i"}
+	for _, e := range env {
+		full = append(full, "-e", e)
+	}
+	full = append(full, o.name)
+	full = append(full, args...)
+	cmd := exec.CommandContext(ctx, "podman", full...)
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 

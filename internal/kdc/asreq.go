@@ -16,6 +16,14 @@ import (
 // needed, which a straight-line Go function does not.
 type asState struct {
 	req wire.ASReq
+
+	// raw is the request exactly as it arrived. RFC 6806's reply
+	// checksum is computed over those bytes, so re-encoding req
+	// would not do: DER is canonical, but a peer that encoded
+	// something a shade differently would still have its own
+	// bytes checksummed by the C and would reject ours.
+	raw []byte
+
 	now uint32
 
 	cname  wire.PrincipalName
@@ -52,8 +60,14 @@ type asState struct {
 
 // AS answers an AS-REQ. The second result is a refusal to encode as a
 // KRB-ERROR; exactly one of the two is non-nil.
-func (k *KDC) AS(req wire.ASReq) (*wire.ASRep, *wire.KRBError) {
-	s := &asState{req: req, now: stamp(k.now())}
+//
+// msg is the request as it arrived on the wire, which the reply
+// checksum needs and which req cannot supply -- see asState.raw.
+func (k *KDC) AS(
+	msg []byte,
+	req wire.ASReq,
+) (*wire.ASRep, *wire.KRBError) {
+	s := &asState{req: req, raw: msg, now: stamp(k.now())}
 	if code, status := k.principals(s); code != 0 {
 		return nil, k.krbError(code, status, s.nameOrNil())
 	}
