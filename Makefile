@@ -348,8 +348,18 @@ golden: ## Run the differential tests against the C KDC
 		     exit 1; }
 	$(GO) test -v -count=1 ./internal/golden/
 
+# A test binary killed outright never reaches its cleanup, so its
+# container keeps running and holds the port it published. The harness
+# labels every container it starts and sweeps them before a run; this
+# does the same by hand.
+.PHONY: golden-sweep
+golden-sweep: ## Remove oracle containers left running
+	@ids=$$(podman ps -aq --filter label=kdiamond-golden=1); \
+	if [ -n "$$ids" ]; then podman rm -f $$ids; \
+	else echo "no oracle containers to remove"; fi
+
 .PHONY: golden-clean
-golden-clean: ## Remove the oracle image
+golden-clean: golden-sweep ## Remove the oracle image and containers
 	-podman rmi -f $(ORACLE_IMAGE) 2>/dev/null
 
 # --- running in a container -------------------------------------------

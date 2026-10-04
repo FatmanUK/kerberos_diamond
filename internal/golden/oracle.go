@@ -75,6 +75,7 @@ func startOracle(ctx context.Context) (*Oracle, error) {
 		"127.0.0.1:%d:%d", port, oraclePort)
 	run := exec.CommandContext(ctx, "podman", "run", "--rm", "-d",
 		"--name", name,
+		"--label", oracleLabel,
 		"-p", publish,
 		OracleImage,
 	)
@@ -96,10 +97,35 @@ func startOracle(ctx context.Context) (*Oracle, error) {
 	return o, nil
 }
 
+// oracleLabel marks every container this harness starts, so a stale
+// one can be found and removed without guessing at names.
+const oracleLabel = "kdiamond-golden=1"
+
 // stop removes the container, ignoring the error: it is called from a
 // defer, and a container that is already gone is the wanted state.
 func (o *Oracle) stop() {
 	_ = exec.Command("podman", "rm", "-f", o.name).Run()
+}
+
+// SweepOracles removes every container this harness has left running.
+//
+// `podman run --rm' only cleans up a container that *stops*, and a
+// test binary killed outright -- SIGPIPE from a closed pipe is the
+// easy way to do it, SIGKILL the other -- never reaches its cleanup,
+// so the KDC keeps running and holds its published port. Sweeping
+// before a run is what stops those accumulating.
+func SweepOracles() error {
+	out, err := exec.Command("podman", "ps", "-aq",
+		"--filter", "label="+oracleLabel).Output()
+	if err != nil {
+		return err
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return nil
+	}
+	args := append([]string{"rm", "-f"}, ids...)
+	return exec.Command("podman", args...).Run()
 }
 
 // waitUntilUp blocks until the KDC answers a request.

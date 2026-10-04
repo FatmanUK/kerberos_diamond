@@ -25,6 +25,13 @@ func TestMain(m *testing.M) {
 		// golden-build', which is a long Kerberos 5 compile.
 		os.Exit(m.Run())
 	}
+	// A previous run killed before its cleanup leaves its KDC
+	// running and holding a port; clear those out first.
+	if err := SweepOracles(); err != nil {
+		os.Stderr.WriteString(
+			"sweeping stale oracles: " +
+				err.Error() + "\n")
+	}
 	ctx, cancel := context.WithTimeout(
 		context.Background(), 2*time.Minute)
 	o, err := startOracle(ctx)
