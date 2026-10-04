@@ -91,10 +91,16 @@ RUN chmod 0755 /usr/local/bin/realm-setup
 # two runs of the oracle are the same realm with the same keys. A
 # golden fixture wants exactly that; it is the opposite of what a test
 # suite randomising its passwords wants.
+#
+# KRB5_TGT_PASSWORD exists because kdb5_util create gives krbtgt a
+# *random* key, which no independent implementation can reproduce; the
+# start-up script resets it from this password so the harness can
+# decrypt the C KDC's tickets. See realm-setup.sh.
 ENV KRB5_REALM=KDIAMOND.TEST \
     KRB5_MASTER_PASSWORD=master \
     KRB5_USER=user \
     KRB5_USER_PASSWORD=userpassword \
+    KRB5_TGT_PASSWORD=tgtpassword \
     KRB5_KDC_PORT=8088 \
     KRB5_TESTDIR=/realm \
     TZ=UTC \

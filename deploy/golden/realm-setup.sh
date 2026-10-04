@@ -13,6 +13,7 @@ set -eu
 : "${KRB5_MASTER_PASSWORD:?}"
 : "${KRB5_USER:?}"
 : "${KRB5_USER_PASSWORD:?}"
+: "${KRB5_TGT_PASSWORD:?}"
 : "${KRB5_KDC_PORT:?}"
 : "${KRB5_TESTDIR:?}"
 
@@ -115,5 +116,20 @@ kadmin.local -q "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
 # the simple case above.
 kadmin.local -q "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
 	+requires_preauth preauth@$KRB5_REALM" >/dev/null
+
+# The krbtgt key kdb5_util create writes is a *random* key
+# (tgt_keysalt_iterate, kadmin/dbutil/kdb5_create.c:441-460) -- seeded
+# from the master password, but still the output of the PRNG, so it is
+# not something an independent implementation can reproduce. Setting it
+# from a password makes it string_to_key over the krbtgt's own default
+# salt, which is derivable from the realm alone. That is what lets the
+# harness decrypt the C KDC's *ticket* and compare the EncTicketPart,
+# where most of what the AS exchange decides actually lives.
+#
+# cpw bumps the key version, so krbtgt ends up at kvno 2 while the user
+# principals stay at 1. That is deterministic and left visible rather
+# than papered over.
+kadmin.local -q "cpw -pw $KRB5_TGT_PASSWORD \
+	krbtgt/$KRB5_REALM@$KRB5_REALM" >/dev/null
 
 exec "$@"

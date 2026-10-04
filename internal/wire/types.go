@@ -139,6 +139,7 @@ const (
 	PAETypeInfo    int32 = 11
 	PAETypeInfo2   int32 = 19
 	PAReqEncPARep  int32 = 149
+	PAPACRequest   int32 = 128
 	PAFXCookie     int32 = 133
 	PAFXFast       int32 = 136
 )
@@ -188,6 +189,14 @@ type derLastReqEntry struct {
 	Type  int32     `asn1:"explicit,tag:0"`
 	Value time.Time `asn1:"explicit,generalized,tag:1"`
 }
+
+// Transited encoding types, from krb5.hin:1854.
+const (
+	// TransitedDomainX500Compress is the only type defined, and
+	// the KDC sets it on every ticket it issues even though the
+	// contents are empty (do_as_req.c:689).
+	TransitedDomainX500Compress int32 = 1
+)
 
 // TransitedEncoding records the realms a ticket crossed.
 type TransitedEncoding struct {

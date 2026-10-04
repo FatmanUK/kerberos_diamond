@@ -209,20 +209,55 @@ func TestPreauthRejectsStaleTimestamps(t *testing.T) {
 }
 
 // A principal *without* the requirement gets a ticket in one round
-// trip and no padata travels in either direction. That is the
-// simplest and most deterministic exchange, which is why it is the
-// one the differential harness starts from.
-func TestNoPreauthMeansNoPAData(t *testing.T) {
+// trip and sends no PA-ENC-TIMESTAMP -- but the reply still carries
+// PA-ETYPE-INFO2.
+//
+// That last part is not an oversight: return_padata adds etype-info2
+// to every AS-REP, not only to a refusal
+// (kdc/kdc_preauth.c:1486-1492). This test originally asserted the
+// reply had no padata at all, which was this implementation's
+// assumption rather than upstream's behaviour, and the differential
+// harness caught it.
+func TestNoPreauthStillSendsETypeInfo2(t *testing.T) {
 	k := testKDC(t)
 	rep, kerr := k.AS(asRequest([]string{"user"}))
 	if kerr != nil {
 		t.Fatalf("AS refused: %v", kerr)
 	}
-	if rep.PAData != nil {
-		t.Errorf("reply carries padata: %+v", rep.PAData)
+	if len(rep.PAData) != 1 {
+		t.Fatalf("reply padata is %+v, want one entry",
+			rep.PAData)
+	}
+	if rep.PAData[0].Type != wire.PAETypeInfo2 {
+		t.Errorf("padata type is %d, want %d",
+			rep.PAData[0].Type, wire.PAETypeInfo2)
+	}
+	info, err := wire.UnmarshalETypeInfo2(rep.PAData[0].Value)
+	if err != nil {
+		t.Fatalf("PA-ETYPE-INFO2: %v", err)
+	}
+	if len(info) != 1 || info[0].Salt == nil {
+		t.Fatalf("etype-info2 is %+v", info)
 	}
 	enc := decodeReply(t, k, rep)
 	if enc.Flags.Has(wire.FlagPreAuthent) {
 		t.Error("PreAuthent set without preauth")
+	}
+}
+
+// PA-PW-SALT is never sent. add_pw_salt includes it only for a
+// request that asked for no enctype requiring etype-info2
+// (kdc/kdc_preauth.c:805-824), and every AES type requires it -- so a
+// request this KDC can answer never qualifies.
+func TestNoPWSalt(t *testing.T) {
+	k := testKDC(t)
+	rep, kerr := k.AS(asRequest([]string{"user"}))
+	if kerr != nil {
+		t.Fatalf("AS refused: %v", kerr)
+	}
+	for _, p := range rep.PAData {
+		if p.Type == wire.PAPWSalt {
+			t.Error("reply carries PA-PW-SALT")
+		}
 	}
 }

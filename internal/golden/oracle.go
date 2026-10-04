@@ -29,6 +29,17 @@ const (
 	UserName     = "user"
 	UserPassword = "userpassword"
 
+	// TgtPassword is what the krbtgt key is set from. kdb5_util
+	// create gives krbtgt a *random* key
+	// (kadmin/dbutil/kdb5_create.c:441-460), which no independent
+	// implementation can reproduce, so realm-setup.sh resets it
+	// from this password. That is what lets the harness decrypt
+	// the C KDC's tickets and compare the EncTicketPart, where
+	// most of what the AS exchange decides actually lives. cpw
+	// bumps the key version, so krbtgt sits at kvno 2.
+	TgtPassword = "tgtpassword"
+	TgtKVNO     = 2
+
 	// PreauthName demands pre-authentication; UserName does not.
 	// Keeping both means the padata-free single round trip and
 	// the PA-ENC-TIMESTAMP path can be exercised separately.

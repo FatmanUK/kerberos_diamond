@@ -342,11 +342,19 @@ $(ORACLE_SRC)/src:
 	git submodule update --init $(ORACLE_SRC)
 
 .PHONY: golden
+# The differential tests need both halves: the C KDC in a container and
+# a Go KDC over Postgres. Either one missing makes them skip rather than
+# fail, so both are arranged here -- a skipped comparison that looked
+# like a pass is the failure mode this whole harness exists to avoid.
 golden: ## Run the differential tests against the C KDC
 	@podman image exists $(ORACLE_IMAGE) \
 		|| { echo "the oracle is not built; run 'make golden-build'"; \
 		     exit 1; }
-	$(GO) test -v -count=1 ./internal/golden/
+	@if [ -z "$$KD_TEST_DATABASE_URL" ]; then \
+		$(MAKE) --no-print-directory db-up; \
+	fi
+	KD_TEST_DATABASE_URL="$${KD_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
+		$(GO) test -v -count=1 ./internal/golden/
 
 # A test binary killed outright never reaches its cleanup, so its
 # container keeps running and holds the port it published. The harness

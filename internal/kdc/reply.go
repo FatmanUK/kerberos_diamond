@@ -19,7 +19,12 @@ func (k *KDC) assemble(s *asState) (*wire.ASRep, error) {
 	if err != nil {
 		return nil, err
 	}
+	pa, err := k.replyPAData(s)
+	if err != nil {
+		return nil, err
+	}
 	return &wire.ASRep{
+		PAData:  pa,
 		CRealm:  k.Realm,
 		CName:   s.cname,
 		Ticket:  *tkt,
@@ -27,22 +32,33 @@ func (k *KDC) assemble(s *asState) (*wire.ASRep, error) {
 	}, nil
 }
 
+// replyPAData is the padata every successful AS-REP carries.
+//
+// PA-ETYPE-INFO2 goes in *every* reply, not only a preauth refusal:
+// return_padata adds it unconditionally unless a preauth mechanism
+// replaced the reply key (kdc/kdc_preauth.c:1486-1492). The comment
+// there explains the exception -- RFC 4120 section 5.2.7.5 forbids
+// describing a reply key of a different enctype -- and no mechanism
+// here replaces the key, so the exception never applies.
+//
+// PA-PW-SALT is *not* included. add_pw_salt sends it only to "old
+// clients", meaning a request that asked for no enctype requiring
+// etype-info2 (:805-824); the AES types all require it, so a request
+// this KDC can answer never qualifies.
+func (k *KDC) replyPAData(s *asState) ([]wire.PAData, error) {
+	info, err := k.etypeInfo2(s)
+	if err != nil {
+		return nil, err
+	}
+	return []wire.PAData{
+		{Type: wire.PAETypeInfo2, Value: info},
+	}, nil
+}
+
 // ticket seals the EncTicketPart under the server's key with key
 // usage 2, and records the server's current key version on it.
 func (k *KDC) ticket(s *asState) (*wire.Ticket, error) {
-	plain, err := wire.MarshalEncTicketPart(wire.EncTicketPart{
-		Flags:    s.flags,
-		Key:      s.session,
-		CRealm:   k.Realm,
-		CName:    s.cname,
-		AuthTime: unstamp(s.authTime),
-		// The ticket's own starttime is absent when zero and
-		// gets no authtime default on decode, unlike the
-		// reply's -- see wire.EncTicketPart.
-		StartTime: optStamp(s.start),
-		EndTime:   unstamp(s.end),
-		RenewTill: optStamp(s.renew),
-	})
+	plain, err := k.encTicketPart(s)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +80,30 @@ func (k *KDC) ticket(s *asState) (*wire.Ticket, error) {
 			Cipher: ct,
 		},
 	}, nil
+}
+
+// encTicketPart encodes what goes inside the ticket.
+func (k *KDC) encTicketPart(s *asState) ([]byte, error) {
+	return wire.MarshalEncTicketPart(wire.EncTicketPart{
+		Flags:  s.flags,
+		Key:    s.session,
+		CRealm: k.Realm,
+		CName:  s.cname,
+		// The transited encoding is empty but its *type* is
+		// 1, DOMAIN-X500-COMPRESS, not 0: the KDC sets it
+		// unconditionally (do_as_req.c:689). A zero there is
+		// a one-byte difference that no round-trip test sees.
+		Transited: wire.TransitedEncoding{
+			Type: wire.TransitedDomainX500Compress,
+		},
+		AuthTime: unstamp(s.authTime),
+		// The ticket's own starttime is absent when zero and
+		// gets no authtime default on decode, unlike the
+		// reply's -- see wire.EncTicketPart.
+		StartTime: optStamp(s.start),
+		EndTime:   unstamp(s.end),
+		RenewTill: optStamp(s.renew),
+	})
 }
 
 // encPart seals the EncKDCRepPart under the client's long-term key

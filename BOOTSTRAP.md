@@ -38,6 +38,12 @@ that have aged worst in the C:
   HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
   checked, and the default salt is cross-checked against what the C KDC
   actually computes.
+- **The vertical slice is closed.** `internal/kdc` answers an AS-REQ,
+  `internal/transport` carries it over MS-KKDCP on HTTPS, and both binaries
+  run. The golden harness drives one encoded AS-REQ through the C KDC in a
+  container and through the Go KDC in process, decrypts *both* halves of
+  each reply, and compares them field by field — and they match, including
+  the EncTicketPart that only the krbtgt key opens.
 - **`internal/store` is done** for what the AS exchange needs: the schema,
   principal lookup, the stored-key blob layout, the kvno/enctype key search
   ported from `krb5_dbe_def_search_enctype`, and `SetPassword` for
@@ -48,9 +54,10 @@ that have aged worst in the C:
   the MS-KKDCP envelope, with the TCP framing. Every one of them is decoded
   from upstream's own byte-exact reference output and re-encoded to identical
   octets.
-- **No KDC yet.** `internal/kdc` and `internal/transport` hold a doc comment
-  and nothing else, and both binaries refuse to run with "not implemented
-  yet" after loading their configuration.
+- **`internal/kdc` and `internal/transport` are done** for the AS exchange,
+  padata-free and preauth paths both, and both binaries run: `kdiamond serve`
+  listens on HTTPS speaking MS-KKDCP, and `kdiamond-proxy` carries TLS for a
+  client built without a module of its own.
 - Planning is complete and the architecture in §3.2 and §3.3 is settled. §2
   is the order of work; steps 1 and 2 are done and step 3 is under way.
 
@@ -64,14 +71,24 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 1. ~~The repository skeleton.~~ Done.
 2. ~~The C oracle.~~ Done.
-3. **The protocol slice**, in this order, because each needs the one before
-   it: `internal/crypto` (aes256- and aes128-cts-hmac-sha1-96 behind a
-   dispatch table, tested against the RFC 3962 vectors upstream already has
-   runnable in `lib/crypto/crypto_tests/`), `internal/wire` (the ASN.1 the AS
-   exchange touches, round-tripped against `tests/asn.1/reference_encode.out`),
-   `internal/store` (principals in Postgres, modelled on
-   `kadmin/dbutil/tabdump.c`'s relations), then the AS exchange and the
-   differential comparison.
+3. ~~**The protocol slice.**~~ Done. `internal/crypto`, `internal/wire`,
+   `internal/store`, the AS exchange in `internal/kdc`, the KKDCP transport,
+   and the differential comparison that proves the Go AS-REP matches the C
+   KDC's field for field. `make golden` runs it.
+
+**What is next, in the plan file's order:**
+
+1. **The end-to-end check.** A stock `kinit` built from the submodule, driven
+   through `kdiamond-proxy` at the Go KDC. The field-by-field comparison is
+   stronger evidence about the *messages*; an unmodified client getting a TGT
+   is the only evidence that "behaviour-compatible" means anything in
+   practice.
+2. **The TGS exchange.** The slice above gets a TGT and nothing yet spends
+   it. TGS reuses the whole of `internal/wire` and `internal/crypto` and adds
+   ticket validation, so it is the cheapest large gain available.
+3. **The remaining enctypes**, aes-sha2 (RFC 8009) first, because its
+   KDF-HMAC-SHA2 derivation is a genuinely different scheme and will prove
+   the enctype dispatch table is a table and not a special case.
 
 ## 3. Project State
 
@@ -172,6 +189,27 @@ are not "fixed" back by accident.
   fixed password gives a reproducible master key and reproducible stored
   keys. The realm is built at container start rather than baked into the
   image, so each run begins from an identical database with no history.
+**The AS exchange:**
+
+- **No Windows PAC.** A stock MIT KDC puts a signed MS-PAC in every AS
+  ticket unless the client declines one (`kdc/kdc_authdata.c:479-493`,
+  `include_pac_p` at `kdc/kdc_preauth.c:1581-1609`). This KDC issues none:
+  MS-PAC is NDR-encoded Windows interop carrying two keyed checksums, and it
+  is nowhere near the AS slice. The golden harness declines the PAC with
+  `PA-PAC-REQUEST(false)` — something an unmodified client is entitled to do
+  — so the comparison covers the whole reply with no skipped fields, and the
+  gap is recorded here instead of hidden in an exemption. A Windows client
+  expecting a PAC will not be satisfied by this KDC yet.
+- **No FAST.** Upstream's hint list leads with an empty `PA-FX-FAST` to
+  advertise it (`kdc/kdc_preauth.c:380`). This does not advertise what it
+  cannot do: claiming FAST would invite a client to negotiate something that
+  then fails.
+- **No authorization data, and `last-req` is upstream's stub.**
+  `fetch_last_req_info` returns one constant `{KRB5_LRQ_NONE, 0}` entry
+  (`kdc/kdc_util.c:677-688`); matching the stub is deliberate, because
+  implementing last-req properly would diverge from every C transcript
+  immediately.
+
 **The principal store:**
 
 - **The schema follows `kadmin/dbutil/tabdump.c`, not `krb5_db_entry`.**
@@ -336,9 +374,31 @@ tests. It is green.
   real C KDC. They skip, rather than fail, when the image has not been built,
   so `make check` stays green on a machine that has not spent four minutes
   compiling Kerberos 5. `make golden` runs them for real.
-- **Nothing is compared yet.** The harness can drive the C KDC and read its
-  answers, but there is no Go KDC to put beside it, so `compare.go` and the
-  normalisation it needs arrive with the protocol slice.
+- **`internal/kdc` and `internal/transport`** — covered. The reply is opened
+  with the key a client derives from the password and the ticket with the
+  krbtgt's, then the two halves are compared against each other. The preauth
+  handshake is driven as a real client would: the salt used in the second
+  round trip is the one the KDC's hint named, not one the test assumed. The
+  transport is exercised end to end through real TLS, including a second
+  request on the same connection, because the preauth handshake is two.
+- **The differential comparison is real, and it works.** `make golden` sends
+  one encoded AS-REQ to both implementations and compares the decoded,
+  normalised structures. It found four divergences on its first run, all of
+  them this implementation's fault and all now fixed: a missing
+  PA-ETYPE-INFO2 in the reply, a transited type of 0 instead of 1, and the
+  two consequences of the Windows PAC. Reading the C and reasoning about it
+  had already missed all four.
+- **Every golden case asserts the exchange *succeeded*.** Two KDCs that both
+  answer `KRB5KDC_ERR_C_PRINCIPAL_UNKNOWN` agree perfectly while testing
+  nothing, so `decodeReply` refuses a KRB-ERROR outright and
+  `assertSucceeded` requires a session key, a server name, an end time after
+  the authtime, and the initial flag. The one case that expects a refusal —
+  the first half of the preauth handshake — says so, and compares the hint a
+  client has to act on rather than merely agreeing on "no".
+- **Time *relationships* are asserted before the comparison.** Rebasing
+  every timestamp on the authtime is what makes the two sides comparable,
+  and it would also let a clamping bug normalise into a passing test, so each
+  side is checked on its own first.
 
 The 70-column rule is checked over the whole tree, not just a diff, and CI
 is not allowed to ignore it.

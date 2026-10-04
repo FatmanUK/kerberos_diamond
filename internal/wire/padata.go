@@ -104,3 +104,29 @@ func UnmarshalETypeInfo2(b []byte) ([]ETypeInfo2Entry, error) {
 	}
 	return out, nil
 }
+
+// derPAPACRequest is PA-PAC-REQUEST, a SEQUENCE of one BOOLEAN
+// (asn1_k_encode.c:987-991).
+type derPAPACRequest struct {
+	IncludePAC bool `asn1:"explicit,tag:0"`
+}
+
+// MarshalPAPACRequest encodes a PA-PAC-REQUEST, which is how a client
+// asks for or declines a Windows PAC in its ticket.
+//
+// A request with no PA-PAC-REQUEST gets one: include_pac_p defaults
+// to TRUE and only a decoded FALSE suppresses it
+// (kdc/kdc_preauth.c:1581-1609). So the padata is only ever worth
+// sending to say no.
+func MarshalPAPACRequest(include bool) ([]byte, error) {
+	return asn1.Marshal(derPAPACRequest{IncludePAC: include})
+}
+
+// UnmarshalPAPACRequest decodes a PA-PAC-REQUEST.
+func UnmarshalPAPACRequest(b []byte) (bool, error) {
+	var d derPAPACRequest
+	if _, err := asn1.Unmarshal(b, &d); err != nil {
+		return false, derErr("PA-PAC-REQUEST", err)
+	}
+	return d.IncludePAC, nil
+}
