@@ -9,32 +9,32 @@ import (
 // The keyed-checksum vectors from upstream's
 // lib/crypto/crypto_tests/t_cksums.c. These anchor the HMAC, the Kc
 // derivation and the 96-bit truncation together.
-func TestChecksum(t *testing.T) {
-	cases := []struct {
-		enc   EncType
-		msg   string
-		usage Usage
-		key   string
-		want  string
-	}{
-		{
-			AES128CTSHMACSHA196,
-			"eight nine ten eleven twelve thirteen",
-			3,
-			"9062430C8CDA3388922E6D6A509F5B7A",
-			"01A4B088D45628F6946614E3",
-		},
-		{
-			AES256CTSHMACSHA196,
-			"fourteen",
-			4,
-			"B1AE4CD8462AFF1677053CC9279AAC30" +
-				"B796FB81CE21474DD3DDBCFEA4EC76D7",
-			"E08739E3279E2903EC8E3836",
-		},
-	}
+var checksumCases = []struct {
+	enc   EncType
+	msg   string
+	usage Usage
+	key   string
+	want  string
+}{
+	{
+		AES128CTSHMACSHA196,
+		"eight nine ten eleven twelve thirteen",
+		3,
+		"9062430C8CDA3388922E6D6A509F5B7A",
+		"01A4B088D45628F6946614E3",
+	},
+	{
+		AES256CTSHMACSHA196,
+		"fourteen",
+		4,
+		"B1AE4CD8462AFF1677053CC9279AAC30" +
+			"B796FB81CE21474DD3DDBCFEA4EC76D7",
+		"E08739E3279E2903EC8E3836",
+	},
+}
 
-	for _, tc := range cases {
+func TestChecksum(t *testing.T) {
+	for _, tc := range checksumCases {
 		p, err := Profile(tc.enc)
 		if err != nil {
 			t.Fatalf("Profile: %v", err)

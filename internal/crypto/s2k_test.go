@@ -17,45 +17,45 @@ func iterParams(n uint32) []byte {
 // The string-to-key vectors from RFC 3962 appendix B, taken from
 // upstream's lib/crypto/crypto_tests/t_str2key.c rather than retyped
 // from the RFC.
-func TestStringToKey(t *testing.T) {
-	cases := []struct {
-		enc      EncType
-		password string
-		salt     string
-		iter     uint32
-		want     string
-	}{
-		{AES128CTSHMACSHA196, "password",
-			"ATHENA.MIT.EDUraeburn", 1,
-			"42263C6E89F4FC28B8DF68EE09799F15"},
-		{AES256CTSHMACSHA196, "password",
-			"ATHENA.MIT.EDUraeburn", 1,
-			"FE697B52BC0D3CE14432BA036A92E65B" +
-				"BB52280990A2FA27883998D72AF30161"},
-		{AES128CTSHMACSHA196, "password",
-			"ATHENA.MIT.EDUraeburn", 2,
-			"C651BF29E2300AC27FA469D693BDDA13"},
-		{AES256CTSHMACSHA196, "password",
-			"ATHENA.MIT.EDUraeburn", 2,
-			"A2E16D16B36069C135D5E9D2E25F8961" +
-				"02685618B95914B467C67622225824FF"},
-		{AES128CTSHMACSHA196, "password",
-			"ATHENA.MIT.EDUraeburn", 1200,
-			"4C01CD46D632D01E6DBE230A01ED642A"},
-		{AES256CTSHMACSHA196, "password",
-			"ATHENA.MIT.EDUraeburn", 1200,
-			"55A6AC740AD17B4846941051E1E8B0A7" +
-				"548D93B0AB30A8BC3FF16280382B8C2A"},
-		{AES128CTSHMACSHA196, "password",
-			"\x12\x34\x56\x78\x78\x56\x34\x12", 5,
-			"E9B23D52273747DD5C35CB55BE619D8E"},
-		{AES256CTSHMACSHA196, "password",
-			"\x12\x34\x56\x78\x78\x56\x34\x12", 5,
-			"97A4E786BE20D81A382D5EBC96D5909C" +
-				"ABCDADC87CA48F574504159F16C36E31"},
-	}
+var s2kCases = []struct {
+	enc      EncType
+	password string
+	salt     string
+	iter     uint32
+	want     string
+}{
+	{AES128CTSHMACSHA196, "password",
+		"ATHENA.MIT.EDUraeburn", 1,
+		"42263C6E89F4FC28B8DF68EE09799F15"},
+	{AES256CTSHMACSHA196, "password",
+		"ATHENA.MIT.EDUraeburn", 1,
+		"FE697B52BC0D3CE14432BA036A92E65B" +
+			"BB52280990A2FA27883998D72AF30161"},
+	{AES128CTSHMACSHA196, "password",
+		"ATHENA.MIT.EDUraeburn", 2,
+		"C651BF29E2300AC27FA469D693BDDA13"},
+	{AES256CTSHMACSHA196, "password",
+		"ATHENA.MIT.EDUraeburn", 2,
+		"A2E16D16B36069C135D5E9D2E25F8961" +
+			"02685618B95914B467C67622225824FF"},
+	{AES128CTSHMACSHA196, "password",
+		"ATHENA.MIT.EDUraeburn", 1200,
+		"4C01CD46D632D01E6DBE230A01ED642A"},
+	{AES256CTSHMACSHA196, "password",
+		"ATHENA.MIT.EDUraeburn", 1200,
+		"55A6AC740AD17B4846941051E1E8B0A7" +
+			"548D93B0AB30A8BC3FF16280382B8C2A"},
+	{AES128CTSHMACSHA196, "password",
+		"\x12\x34\x56\x78\x78\x56\x34\x12", 5,
+		"E9B23D52273747DD5C35CB55BE619D8E"},
+	{AES256CTSHMACSHA196, "password",
+		"\x12\x34\x56\x78\x78\x56\x34\x12", 5,
+		"97A4E786BE20D81A382D5EBC96D5909C" +
+			"ABCDADC87CA48F574504159F16C36E31"},
+}
 
-	for _, tc := range cases {
+func TestStringToKey(t *testing.T) {
+	for _, tc := range s2kCases {
 		p, err := Profile(tc.enc)
 		if err != nil {
 			t.Fatalf("Profile(%d): %v", tc.enc, err)
