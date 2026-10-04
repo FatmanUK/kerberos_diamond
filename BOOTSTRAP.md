@@ -38,10 +38,15 @@ that have aged worst in the C:
   HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
   checked, and the default salt is cross-checked against what the C KDC
   actually computes.
-- **No wire format, store or KDC yet.** `internal/wire`, `internal/store`,
-  `internal/kdc` and `internal/transport` hold a doc comment and nothing
-  else, and both binaries refuse to run with "not implemented yet" after
-  loading their configuration.
+- **`internal/wire` is done** for the AS exchange: AS-REQ, AS-REP, Ticket,
+  EncTicketPart, EncKDCRepPart, KRB-ERROR, PA-ENC-TS-ENC, PA-ETYPE-INFO2 and
+  the MS-KKDCP envelope, with the TCP framing. Every one of them is decoded
+  from upstream's own byte-exact reference output and re-encoded to identical
+  octets.
+- **No store or KDC yet.** `internal/store`, `internal/kdc` and
+  `internal/transport` hold a doc comment and nothing else, and both binaries
+  refuse to run with "not implemented yet" after loading their
+  configuration.
 - Planning is complete and the architecture in §3.2 and §3.3 is settled. §2
   is the order of work; steps 1 and 2 are done and step 3 is under way.
 
@@ -252,6 +257,17 @@ tests. It is green.
   rather than asserting them, and says in its own header comment that it does
   not even compile. The real check arrives with the AS exchange, when the C
   client has to decrypt a reply this code encrypted.
+- **`internal/wire`** — covered, and anchored the same way: every message the
+  AS exchange touches is decoded from `tests/asn.1/reference_encode.out` and
+  re-encoded to byte-identical octets. That file is output from upstream's own
+  encoder, so it settles every tag number, optionality rule and string type at
+  once, including three the C comments warn about and three they do not. Both
+  the all-fields and the optionals-absent form of each message are used,
+  because absence is most of what there is to get wrong.
+  - **One deliberate gap.** `KDC-PROXY-MESSAGE` has no reference encoding —
+    upstream's test program does not cover it — so it is round-tripped against
+    itself and its shape asserted by hand. It is checked for real by the shim
+    talking to a stock client.
 - **Everything else** — not written, so not tested. The packages hold a
   doc comment and nothing else.
 - **`internal/golden`** — the oracle half is covered by six tests against the

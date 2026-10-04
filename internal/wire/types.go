@@ -1,0 +1,258 @@
+package wire
+
+import (
+	"encoding/asn1"
+	"fmt"
+	"time"
+)
+
+// Principal name types, from RFC 4120 section 6.2.
+const (
+	NTUnknown    int32 = 0
+	NTPrincipal  int32 = 1
+	NTSrvInst    int32 = 2
+	NTSrvHst     int32 = 3
+	NTEnterprise int32 = 10
+)
+
+// PrincipalName is a principal's name without its realm. The realm
+// travels separately in every message that carries a name, which is
+// why it is not a field here.
+type PrincipalName struct {
+	Type       int32
+	Components []string
+}
+
+// String renders the name as Kerberos writes it, components separated
+// by slashes. It does not include a realm.
+func (p PrincipalName) String() string {
+	out := ""
+	for i, c := range p.Components {
+		if i > 0 {
+			out += "/"
+		}
+		out += c
+	}
+	return out
+}
+
+// Equal compares two names, type included.
+func (p PrincipalName) Equal(q PrincipalName) bool {
+	if p.Type != q.Type ||
+		len(p.Components) != len(q.Components) {
+		return false
+	}
+	for i := range p.Components {
+		if p.Components[i] != q.Components[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// derPrincipalName is the DER shape of PrincipalName.
+type derPrincipalName struct {
+	Type       int32           `asn1:"explicit,tag:0"`
+	Components []asn1.RawValue `asn1:"explicit,tag:1"`
+}
+
+func (p PrincipalName) der() derPrincipalName {
+	return derPrincipalName{
+		Type:       p.Type,
+		Components: gstrings(p.Components),
+	}
+}
+
+func (d derPrincipalName) value() (PrincipalName, error) {
+	cs, err := gstringValues(d.Components)
+	if err != nil {
+		return PrincipalName{}, err
+	}
+	return PrincipalName{Type: d.Type, Components: cs}, nil
+}
+
+// EncryptedData is a ciphertext with the enctype and key version
+// needed to decrypt it.
+type EncryptedData struct {
+	EType int32
+
+	// KVNO is the key version. Zero means absent: upstream omits
+	// the field when the value is zero rather than tracking
+	// presence, so a kvno of 0 cannot be expressed and does not
+	// occur.
+	//
+	// It is int32 and not the UInt32 RFC 4120 specifies, because
+	// upstream deliberately encodes it signed
+	// (asn1_k_encode.c:202-212): Windows read-only domain
+	// controllers overload the high 16 bits for krbtgt principals
+	// and write the result as a signed integer, and MIT matches
+	// them for interop. encoding/asn1 has no unsigned support
+	// anyway, so there is nothing lost by agreeing.
+	KVNO int32
+
+	Cipher []byte
+}
+
+// derEncryptedData is the DER shape. KVNO is optional, and Go's asn1
+// omits an optional field only when it is the zero value, which is
+// exactly upstream's rule here.
+type derEncryptedData struct {
+	EType  int32  `asn1:"explicit,tag:0"`
+	KVNO   int32  `asn1:"explicit,optional,tag:1"`
+	Cipher []byte `asn1:"explicit,tag:2"`
+}
+
+func (e EncryptedData) der() derEncryptedData {
+	return derEncryptedData{
+		EType: e.EType, KVNO: e.KVNO, Cipher: e.Cipher,
+	}
+}
+
+func (d derEncryptedData) value() EncryptedData {
+	return EncryptedData{
+		EType: d.EType, KVNO: d.KVNO, Cipher: d.Cipher,
+	}
+}
+
+// EncryptionKey is a session or long-term key.
+type EncryptionKey struct {
+	KeyType  int32
+	KeyValue []byte
+}
+
+type derEncryptionKey struct {
+	KeyType  int32  `asn1:"explicit,tag:0"`
+	KeyValue []byte `asn1:"explicit,tag:1"`
+}
+
+// PAData is one pre-authentication item.
+type PAData struct {
+	Type  int32
+	Value []byte
+}
+
+// Pre-authentication data types the AS exchange uses.
+const (
+	PATGSReq       int32 = 1
+	PAEncTimestamp int32 = 2
+	PAPWSalt       int32 = 3
+	PAETypeInfo    int32 = 11
+	PAETypeInfo2   int32 = 19
+	PAReqEncPARep  int32 = 149
+	PAFXCookie     int32 = 133
+	PAFXFast       int32 = 136
+)
+
+// derPAData's first context tag is 1, not 0. There is no [0] field at
+// all (asn1_k_encode.c:371-377), and a struct numbered from zero
+// decodes as garbage.
+type derPAData struct {
+	Type  int32  `asn1:"explicit,tag:1"`
+	Value []byte `asn1:"explicit,tag:2"`
+}
+
+// paDataDER returns nil, not an empty slice, for no padata.
+// encoding/asn1 omits an optional field only when it equals the zero
+// value, and an empty non-nil slice does not -- it would go on the
+// wire as an empty SEQUENCE where upstream's DEFOPTIONALEMPTYTYPE
+// writes nothing at all.
+func paDataDER(ps []PAData) []derPAData {
+	if len(ps) == 0 {
+		return nil
+	}
+	out := make([]derPAData, len(ps))
+	for i, p := range ps {
+		out[i] = derPAData{Type: p.Type, Value: p.Value}
+	}
+	return out
+}
+
+func paDataValues(ds []derPAData) []PAData {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]PAData, len(ds))
+	for i, d := range ds {
+		out[i] = PAData{Type: d.Type, Value: d.Value}
+	}
+	return out
+}
+
+// LastReqEntry is one entry of a reply's last-req field.
+type LastReqEntry struct {
+	Type  int32
+	Value time.Time
+}
+
+type derLastReqEntry struct {
+	Type  int32     `asn1:"explicit,tag:0"`
+	Value time.Time `asn1:"explicit,generalized,tag:1"`
+}
+
+// TransitedEncoding records the realms a ticket crossed.
+type TransitedEncoding struct {
+	Type     int32
+	Contents []byte
+}
+
+type derTransitedEncoding struct {
+	Type     int32  `asn1:"explicit,tag:0"`
+	Contents []byte `asn1:"explicit,tag:1"`
+}
+
+// checkPvno rejects a message whose protocol version is not 5.
+//
+// Upstream encodes pvno as a constant and, on decode, reports a
+// mismatch as KRB5KDC_ERR_BAD_PVNO specifically rather than as a
+// generic parse failure, because a peer speaking version 4 is worth
+// telling apart from a peer speaking nonsense.
+func checkPvno(got int32) error {
+	if got != Pvno {
+		return fmt.Errorf("%w: pvno is %d, want %d",
+			ErrMalformed, got, Pvno)
+	}
+	return nil
+}
+
+func derKey(k EncryptionKey) derEncryptionKey {
+	return derEncryptionKey{
+		KeyType: k.KeyType, KeyValue: k.KeyValue,
+	}
+}
+
+func (d derEncryptionKey) value() EncryptionKey {
+	return EncryptionKey{
+		KeyType: d.KeyType, KeyValue: d.KeyValue,
+	}
+}
+
+func derTransited(t TransitedEncoding) derTransitedEncoding {
+	return derTransitedEncoding{
+		Type: t.Type, Contents: t.Contents,
+	}
+}
+
+func (d derTransitedEncoding) value() TransitedEncoding {
+	return TransitedEncoding{
+		Type: d.Type, Contents: d.Contents,
+	}
+}
+
+func derLastReqs(es []LastReqEntry) []derLastReqEntry {
+	out := make([]derLastReqEntry, len(es))
+	for i, e := range es {
+		out[i] = derLastReqEntry{
+			Type:  e.Type,
+			Value: kerberosTime(e.Value),
+		}
+	}
+	return out
+}
+
+func lastReqValues(ds []derLastReqEntry) []LastReqEntry {
+	out := make([]LastReqEntry, len(ds))
+	for i, d := range ds {
+		out[i] = LastReqEntry{Type: d.Type, Value: d.Value}
+	}
+	return out
+}
