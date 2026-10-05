@@ -41,28 +41,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	var changed []string
-	for _, root := range flag.Args() {
-		files, err := goFiles(root)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "reflow:", err)
-			os.Exit(1)
-		}
-		for _, path := range files {
-			ok, err := process(path, *write)
-			if err != nil {
-				fmt.Fprintln(
-					os.Stderr,
-					"reflow:",
-					err,
-				)
-				os.Exit(1)
-			}
-			if ok {
-				changed = append(changed, path)
-			}
-		}
-	}
+	changed := processRoots(flag.Args(), *write)
 
 	if *list {
 		for _, p := range changed {
@@ -74,6 +53,38 @@ func main() {
 	if *list && len(changed) > 0 {
 		os.Exit(1)
 	}
+}
+
+// processRoots reflows every eligible file under each root and
+// returns the paths that changed, in the order they were walked.
+//
+// Any failure is fatal rather than reported and skipped: a formatter
+// that rewrote half a tree leaves worse behind than one that refused
+// to start.
+func processRoots(roots []string, write bool) []string {
+	var changed []string
+	for _, root := range roots {
+		files, err := goFiles(root)
+		if err != nil {
+			fatal(err)
+		}
+		for _, path := range files {
+			ok, err := process(path, write)
+			if err != nil {
+				fatal(err)
+			}
+			if ok {
+				changed = append(changed, path)
+			}
+		}
+	}
+	return changed
+}
+
+// fatal reports an error against the command's name and exits.
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, "reflow:", err)
+	os.Exit(1)
 }
 
 // goFiles collects the .go files under root, skipping the vendored C
@@ -177,6 +188,24 @@ func oneLineFunc(line string) (open, body string, ok bool) {
 		return "", "", false
 	}
 
+	start, clean := bodyStart(line)
+	// A body that never opened, never closed, or holds no
+	// statement is not this transformation's business.
+	if !clean || start >= len(line)-1 {
+		return "", "", false
+	}
+	body = strings.TrimSpace(line[start : len(line)-1])
+	if body == "" {
+		return "", "", false
+	}
+	return strings.TrimRight(line[:start], " \t"), body, true
+}
+
+// bodyStart finds the index just past the brace that opens a
+// function's body, reporting whether the line closed everything it
+// opened. An unbalanced or unterminated line is refused: this is a
+// scanner, not a parser, and a wrong guess would rewrite real code.
+func bodyStart(line string) (int, bool) {
 	// depth counts () and [] nesting, so that the braces of a
 	// func type are not mistaken for a body.
 	depth := 0
@@ -209,17 +238,7 @@ func oneLineFunc(line string) (open, body string, ok bool) {
 			braces--
 		}
 	}
-	// A body that never opened, never closed, or holds no
-	// statement is not this transformation's business.
-	if start < 0 || braces != 0 || quote != 0 ||
-		start >= len(line)-1 {
-		return "", "", false
-	}
-	body = strings.TrimSpace(line[start : len(line)-1])
-	if body == "" {
-		return "", "", false
-	}
-	return strings.TrimRight(line[:start], " \t"), body, true
+	return start, start >= 0 && braces == 0 && quote == 0
 }
 
 // splitFields puts each field of an over-long composite literal on
@@ -336,6 +355,28 @@ func packOperands(parts []string, indent string) []string {
 // splitOperators cuts a line after each top-level && or ||, keeping
 // the operator on the line it ends.
 func splitOperators(line string) []string {
+	parts, start := cutAfterOperators(line)
+	if start == 0 {
+		return nil
+	}
+	// A condition already broken across lines ends with its
+	// operator, so the tail is empty. Emitting it would add a
+	// blank line on every run, which is both noise and a failure
+	// to be idempotent.
+	if tail := strings.TrimSpace(line[start:]); tail != "" {
+		parts = append(parts, tail)
+	}
+	if len(parts) < 2 {
+		return nil
+	}
+	return parts
+}
+
+// cutAfterOperators scans for top-level && and || operators,
+// returning the piece each one ends and the index just past the last
+// of them. A zero index means no cut was made, because the scan
+// advances that index past every operator it does cut.
+func cutAfterOperators(line string) ([]string, int) {
 	var parts []string
 	start, depth := 0, 0
 	var quote byte
@@ -368,20 +409,7 @@ func splitOperators(line string) []string {
 			i++
 		}
 	}
-	if start == 0 {
-		return nil
-	}
-	// A condition already broken across lines ends with its
-	// operator, so the tail is empty. Emitting it would add a
-	// blank line on every run, which is both noise and a failure
-	// to be idempotent.
-	if tail := strings.TrimSpace(line[start:]); tail != "" {
-		parts = append(parts, tail)
-	}
-	if len(parts) < 2 {
-		return nil
-	}
-	return parts
+	return parts, start
 }
 
 // splitTopLevel cuts a string at commas that are not nested inside
