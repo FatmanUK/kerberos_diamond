@@ -121,9 +121,7 @@ func UnmarshalKRBError(b []byte) (KRBError, error) {
 		return KRBError{}, err
 	}
 	if d.MsgType != MsgKRBError {
-		return KRBError{}, fmt.Errorf(
-			"%w: msg-type is %d, want %d",
-			ErrMalformed, d.MsgType, MsgKRBError)
+		return KRBError{}, msgTypeErr(d.MsgType, MsgKRBError)
 	}
 	return d.value()
 }

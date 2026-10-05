@@ -54,17 +54,22 @@ const (
 	MsgASRep    = 11
 	MsgTGSReq   = 12
 	MsgTGSRep   = 13
+	MsgAPReq    = 14
 	MsgKRBError = 30
 )
 
 // The application tag numbers themselves. Most match the message
 // type, and the two that do not are the interesting ones.
 const (
-	tagTicket   = 1
-	tagEncTktPt = 3
-	tagASReq    = 10
-	tagASRep    = 11
-	tagKRBError = 30
+	tagTicket        = 1
+	tagAuthenticator = 2
+	tagEncTktPt      = 3
+	tagASReq         = 10
+	tagASRep         = 11
+	tagTGSReq        = 12
+	tagTGSRep        = 13
+	tagAPReq         = 14
+	tagKRBError      = 30
 
 	// tagEncASRepPart is 25 by RFC 4120, and 26 is what MIT
 	// actually writes -- see asTagEncASRepPart in asrep.go.
@@ -90,6 +95,20 @@ var ErrMalformed = errors.New("malformed message")
 func derErr(what string, err error) error {
 	return fmt.Errorf("%w: %s: %v", ErrMalformed, what, err)
 }
+
+// msgTypeErr reports a message whose msg-type is not the one its
+// application tag promised.
+func msgTypeErr(got, want int32) error {
+	return fmt.Errorf("%w: msg-type is %d, want %d",
+		ErrMalformed, got, want)
+}
+
+// seqnoRangeErr reports a sequence number outside the range upstream
+// accepts, which is INT32_MIN to 0xFFFFFFFF -- wider than either a
+// signed or an unsigned 32-bit integer alone, because the decoder
+// tolerates both encodings (asn1_k_encode.c:140-144).
+var seqnoRangeErr = fmt.Errorf(
+	"%w: sequence number out of range", ErrMalformed)
 
 // gstring wraps a Go string as a bare DER GeneralString, for the
 // elements of a SEQUENCE OF where encoding/asn1 adds no tag of its

@@ -26,6 +26,22 @@ const (
 	// strengthened from it).
 	UsageASRepEncPart Usage = 3
 
+	// UsageTGSReqAuthCksum keys the authenticator's checksum over
+	// the TGS-REQ body, and UsageTGSReqAuth encrypts the
+	// authenticator itself -- both under the TGT's session key.
+	// Two usages for one message is what stops a captured
+	// checksum being replayed as a ciphertext or the reverse.
+	UsageTGSReqAuthCksum Usage = 6
+	UsageTGSReqAuth      Usage = 7
+
+	// UsageTGSRepEncPartSessKey and UsageTGSRepEncPartSubKey
+	// encrypt a TGS-REP's enc-part. Which one applies depends on
+	// whether the client put a subkey in its authenticator, and
+	// getting it wrong produces a reply the client cannot read
+	// while looking correct from the KDC's side.
+	UsageTGSRepEncPartSessKey Usage = 8
+	UsageTGSRepEncPartSubKey  Usage = 9
+
 	// UsageASReq keys the checksum a KDC puts in the reply's
 	// encrypted padata when the client asked for one (RFC 6806).
 	// It is 56, far from the others, and is listed separately in

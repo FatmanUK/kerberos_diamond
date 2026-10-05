@@ -152,9 +152,7 @@ func UnmarshalASRep(b []byte) (ASRep, error) {
 		return ASRep{}, err
 	}
 	if d.MsgType != MsgASRep {
-		return ASRep{}, fmt.Errorf(
-			"%w: msg-type is %d, want %d",
-			ErrMalformed, d.MsgType, MsgASRep)
+		return ASRep{}, msgTypeErr(d.MsgType, MsgASRep)
 	}
 	return d.value()
 }
