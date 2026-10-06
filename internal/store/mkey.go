@@ -46,19 +46,37 @@ type MasterKey struct {
 	// KVNO is this master key's version, which kdb5_util create
 	// writes as 1.
 	KVNO int32
+
+	// KDF records which derivation produced Key, for the benefit
+	// of anything reporting what a process is doing. It does not
+	// change how the key is used: by this point it is just bytes.
+	KDF MasterKDF
 }
 
 // DefaultMasterKeyType is the enctype kdb5_util create uses unless
 // told otherwise.
 const DefaultMasterKeyType = crypto.AES256CTSHMACSHA196
 
-// DeriveMasterKey derives the master key from a password and realm.
-//
-// The salt is the one for K/M@REALM: the realm followed by the
-// components "K" and "M" with no separator, which is what
-// krb5_principal2salt produces and what the C KDC's stash file was
-// made from.
+// DeriveMasterKey derives the master key with Argon2id, which is what
+// this project writes.
 func DeriveMasterKey(
+	realm, password string,
+	etype crypto.EncType,
+) (MasterKey, error) {
+	return DeriveMasterKeyWith(
+		KDFArgon2id, realm, password, etype)
+}
+
+// DeriveMasterKeyWith derives the master key by a named derivation.
+//
+// Both use the same salt -- the one for K/M@REALM, the realm followed
+// by the components "K" and "M" with no separator, which is what
+// krb5_principal2salt produces and what the C KDC's stash file was
+// made from. Only the function over it differs, so a realm can be
+// read with one and re-keyed to the other without the salt being a
+// second thing to get right.
+func DeriveMasterKeyWith(
+	kdf MasterKDF,
 	realm, password string,
 	etype crypto.EncType,
 ) (MasterKey, error) {
@@ -66,12 +84,30 @@ func DeriveMasterKey(
 	if err != nil {
 		return MasterKey{}, err
 	}
-	salt := crypto.Salt(realm, []string{"K", "M"})
-	key, err := p.StringToKey(password, salt, nil)
+	key, err := deriveMaster(kdf, p, realm, password)
 	if err != nil {
 		return MasterKey{}, err
 	}
-	return MasterKey{Key: key, EType: etype, KVNO: 1}, nil
+	return MasterKey{
+		Key: key, EType: etype, KVNO: 1, KDF: kdf,
+	}, nil
+}
+
+func deriveMaster(
+	kdf MasterKDF,
+	p *crypto.EncProfile,
+	realm, password string,
+) ([]byte, error) {
+	switch kdf {
+	case KDFArgon2id:
+		return deriveArgon2id(realm, password, p.KeyLength)
+	case KDFStringToKey:
+		// Upstream's: the enctype's own string-to-key over
+		// the K/M salt. Read, never written.
+		salt := crypto.Salt(realm, []string{"K", "M"})
+		return p.StringToKey(password, salt, nil)
+	}
+	return nil, fmt.Errorf("%w: %q", ErrBadKDF, kdf)
 }
 
 func (m MasterKey) check() error {

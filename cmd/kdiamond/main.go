@@ -105,8 +105,9 @@ func serve() error {
 	if err != nil {
 		return err
 	}
-	mkey, err := store.DeriveMasterKey(c.Realm,
-		c.MasterPassword, store.DefaultMasterKeyType)
+	mkey, err := store.DeriveMasterKeyWith(c.MasterKDF,
+		c.Realm, c.MasterPassword,
+		store.DefaultMasterKeyType)
 	if err != nil {
 		return err
 	}
@@ -150,7 +151,8 @@ func listen(c *config.Config, s *store.Store) error {
 		srv.Close()
 	}()
 	log.Info("kdiamond listening", "addr", c.ListenAddr,
-		"realm", c.Realm, "path", c.ProxyPath)
+		"realm", c.Realm, "path", c.ProxyPath,
+		"master-kdf", string(s.MasterKey().KDF))
 	err := srv.ListenAndServeTLS(c.TLSCertFile, c.TLSKeyFile)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil

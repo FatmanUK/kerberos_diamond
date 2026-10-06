@@ -37,8 +37,9 @@ func openStore() (*store.Store, *config.Config, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	mkey, err := store.DeriveMasterKey(c.Realm,
-		c.MasterPassword, store.DefaultMasterKeyType)
+	mkey, err := store.DeriveMasterKeyWith(c.MasterKDF,
+		c.Realm, c.MasterPassword,
+		store.DefaultMasterKeyType)
 	if err != nil {
 		return nil, nil, err
 	}

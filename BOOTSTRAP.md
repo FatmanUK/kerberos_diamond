@@ -101,12 +101,9 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 **What is next, in the plan file's order:**
 
-1. **Argon2id**, per §3.3: new keys written with it, legacy string-to-key
-   read but never written. A deliberate divergence, so it needs its own
-   golden exemption rather than a comparison.
-2. **The TGS cases nothing issues yet** — forwarding, proxying and
+1. **The TGS cases nothing issues yet** — forwarding, proxying and
    user-to-user — each of which has its refusal path ported already.
-3. **Crash-only and high availability**, the 12-factor work this project
+2. **Crash-only and high availability**, the 12-factor work this project
    exists for. It is testable now: there is a KDC worth restarting
    mid-exchange.
 
@@ -359,7 +356,30 @@ are not "fixed" back by accident.
   nor the loaded version is refused with a distinct error rather than
   reported as a bad password, so the missing feature is visible instead of
   baffling.
-- **Argon2id passwords**, with legacy algorithms read but not written.
+- **Argon2id for the master key, and *only* the master key.** This is the
+  place a memory-hard KDF can go without breaking anything, and the reason it
+  cannot go further is worth stating plainly: Kerberos' string-to-key is part
+  of the **protocol**. A client derives its long-term key from the password
+  itself, using the function the enctype number fixes, over the salt and
+  `s2kparams` the KDC advertises. Replacing that with Argon2id would mean no
+  stock client could ever derive the same key — so a principal's long-term key
+  stays PBKDF2, and the original intent of "Argon2id passwords" is not
+  achievable while claiming to interoperate.
+  The master key is different: no client ever sees it, it protects every
+  stored key, and it is the single thing an attacker with a database dump
+  needs. It is now Argon2id at RFC 9106's second recommended setting — 64 MiB,
+  three passes, four lanes — paid once per process start, which a 12-factor
+  KDC can afford and a password-checking path could not.
+- **Upstream's derivation is still readable, never written.** `KD_MASTER_KDF`
+  selects it (`string2key`), so a database created by MIT Kerberos can be
+  opened and re-keyed. It is configuration rather than something stored
+  because nothing persists that could carry it — the key is derived afresh at
+  every start — and a wrong value corrupts nothing: a key simply does not
+  decrypt, and the KDC says so.
+- **The Argon2id parameters are fixed in code and changing one is a
+  re-keying.** Nothing stores them, so raising a parameter changes the derived
+  key and makes an existing database unreadable. That is the same operation as
+  changing the master password, and should be treated as one.
 - **New code says TLS, not SSL** — it's been TLS for over 20 years. Time to
   drop the SSL nomenclature (except where it would cause a problem).
 
@@ -397,10 +417,10 @@ so listing it early would not survive.
   bring `jackc/pgx/v5`, `jackc/pgpassfile`, `jackc/pgservicefile`,
   `jackc/puddle/v2`, `jinzhu/inflection`, `jinzhu/now`, `golang.org/x/sync`
   and `golang.org/x/text` with them, all indirect.
+- `golang.org/x/crypto` — Argon2id for the master key, which brings
+  `golang.org/x/sys` for BLAKE2b's assembly paths.
 
-**Intended, not yet required:**
-
-- `golang.org/x/crypto` — Argon2id, when §3.3's password work lands
+Nothing else is intended. The standard library covers the rest.
 
 The standard library covers more of this than it might seem:
 `encoding/asn1` for the wire types, `crypto/aes`, `crypto/hmac`,
@@ -466,6 +486,12 @@ tests. It is green.
     upstream's test program does not cover it — so it is round-tripped against
     itself and its shape asserted by hand. It is checked for real by the shim
     talking to a stock client.
+- **The master key's two derivations** — covered. Each is reproducible on its
+  own, the two disagree with each other, the realm separates them, material
+  sealed under one does not open under the other, and the legacy one is
+  asserted against `crypto.StringToKey` over the K/M salt directly rather than
+  against itself — because being byte-identical to upstream is the only thing
+  that lets an MIT database be read.
 - **`internal/store`** — covered against a real Postgres, not a mock. Schema
   isolation is asserted rather than assumed: `assertSchemaIsolated` checks the
   tables landed in the scratch schema and *not* in `public`, which is what

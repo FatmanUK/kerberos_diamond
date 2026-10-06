@@ -6,6 +6,12 @@
 // nothing read from the database at startup. A container gets its
 // whole configuration from its environment, and two processes given
 // the same environment behave identically.
+//
+// This package depends on internal/store for one type, the master key
+// derivation's name. That is the right way round -- the store does
+// not know about configuration -- and it keeps the rule this package
+// exists for: a bad environment is reported in full, every fault at
+// once, rather than one per run.
 package config
 
 import (
@@ -14,6 +20,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/FatmanUK/kerberos_diamond/internal/store"
 )
 
 // Config is the whole of a process's configuration.
@@ -40,12 +48,24 @@ type Config struct {
 	TLSKeyFile  string
 
 	// MasterPassword is what the database master key is derived
-	// from. There is no stash file: the key is string-to-key over
-	// the salt for K/M@REALM, so realm plus password determine it
-	// and a replacement container derives the same key from the
-	// same environment. It is the only secret the KDC holds and
-	// the whole database is readable to anyone who learns it.
+	// from. There is no stash file: realm plus password determine
+	// the key, so a replacement container derives the same one
+	// from the same environment. It is the only secret the KDC
+	// holds and the whole database is readable to anyone who
+	// learns it.
 	MasterPassword string
+
+	// MasterKDF is how that password becomes a key: Argon2id,
+	// which is what this project writes, or upstream's
+	// string-to-key, which exists only so a database created by
+	// MIT Kerberos can be opened.
+	//
+	// It is configuration rather than something stored because
+	// nothing persists that could carry it -- the key is derived
+	// afresh at every start. Pointing a KDC at a database with
+	// the wrong value here does not corrupt anything; it simply
+	// cannot decrypt a key, and says so.
+	MasterKDF store.MasterKDF
 
 	// ClockSkew is how far a timestamp may be from this host's
 	// clock and still be accepted.
@@ -90,6 +110,13 @@ func Load() (*Config, error) {
 		} else {
 			c.ClockSkew = parsed
 		}
+	}
+	kdf, err := store.ParseMasterKDF(
+		os.Getenv("KD_MASTER_KDF"))
+	if err != nil {
+		errs = append(errs, err)
+	} else {
+		c.MasterKDF = kdf
 	}
 	errs = append(errs, c.validate()...)
 
