@@ -19,6 +19,17 @@ import (
 type tgt struct {
 	ticket  wire.Ticket
 	session []byte
+
+	// sessionEType is the session key's enctype, which is *not*
+	// the ticket's. The ticket is sealed with the krbtgt's key --
+	// this realm's strongest -- while the session key's enctype
+	// comes from select_session_keytype over the request's list
+	// (kdc/kdc_util.c:1085-1111). Keying the authenticator from
+	// the ticket's enctype instead produces something the KDC
+	// cannot decrypt, which is exactly how the first draft of
+	// this harness failed once the realm held more than one
+	// enctype.
+	sessionEType crypto.EncType
 }
 
 // getTGTFromTheC runs an AS exchange against the C KDC and keeps what
@@ -41,10 +52,16 @@ func getTGTFromTheC(
 		t.Fatalf("asking the C KDC: %v", err)
 	}
 	x := open(t, raw, UserPassword, []string{UserName})
+	return tgtOf(x), x.Enc.AuthTime
+}
+
+// tgtOf keeps what a client keeps out of an AS reply.
+func tgtOf(x Exchange) tgt {
 	return tgt{
-		ticket:  x.Rep.Ticket,
-		session: x.Enc.Key.KeyValue,
-	}, x.Enc.AuthTime
+		ticket:       x.Rep.Ticket,
+		session:      x.Enc.Key.KeyValue,
+		sessionEType: crypto.EncType(x.Enc.Key.KeyType),
+	}
 }
 
 // tgsRequestFor builds the TGS-REQ both implementations answer.
@@ -96,8 +113,9 @@ func tgsRequestFor(
 // tgsAPReq builds the PA-TGS-REQ a client sends.
 func tgsAPReq(t *testing.T, g tgt, bodyDER []byte) wire.PAData {
 	t.Helper()
-	p, err := crypto.Profile(
-		crypto.EncType(g.ticket.EncPart.EType))
+	// The authenticator is keyed with the session key, so its
+	// profile is the session key's and not the ticket's.
+	p, err := crypto.Profile(g.sessionEType)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,10 +455,7 @@ func renewableTGTFromTheC(
 	if !x.Enc.Flags.Has(wire.FlagRenewable) {
 		t.Fatal("the C KDC issued a non-renewable TGT")
 	}
-	return tgt{
-		ticket:  x.Rep.Ticket,
-		session: x.Enc.Key.KeyValue,
-	}, x.Enc
+	return tgtOf(x), x.Enc
 }
 
 // renewRequest builds the TGS-REQ a client sends to renew a TGT.

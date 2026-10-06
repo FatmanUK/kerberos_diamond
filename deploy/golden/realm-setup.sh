@@ -74,6 +74,24 @@ EOF
 # kdc_listen = "" disables UDP listening outright; kdc_tcp_listen keeps
 # TCP. The older kdc_ports/kdc_tcp_ports names are only consulted when
 # these are absent, so setting these is enough.
+# supported_enctypes is set explicitly, and the order matters.
+#
+# The default is only the two RFC 3962 types
+# (KRB5_DEFAULT_SUPPORTED_ENCTYPES, include/osconf.hin:109-111), so a
+# realm left at the default has no aes-sha2 keys and the differential
+# comparison could never reach that family. Listing all four puts it in
+# range.
+#
+# The order decides which key seals a ticket: the KDC takes the *first*
+# key of a principal's highest key version, whatever its enctype
+# (get_first_current_key, kdc/kdc_util.c:461-473). So this list has to
+# match the order internal/crypto reports from Supported(), or the two
+# implementations seal with different enctypes and the diff is about
+# the fixture rather than the code.
+#
+# The master key is left at the default, aes256-cts-hmac-sha1-96
+# (DEFAULT_KDC_ENCTYPE, osconf.hin:90), because it is derived from the
+# master password and the Go side has to derive the same one.
 cat >"$KRB5_KDC_PROFILE" <<EOF
 [kdcdefaults]
 	kdc_listen = ""
@@ -81,6 +99,7 @@ cat >"$KRB5_KDC_PROFILE" <<EOF
 
 [realms]
 	$KRB5_REALM = {
+		supported_enctypes = aes256-cts-hmac-sha384-192:normal aes128-cts-hmac-sha256-128:normal aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal
 		database_module = db
 		key_stash_file = $KRB5_TESTDIR/stash
 		acl_file = $KRB5_TESTDIR/acl

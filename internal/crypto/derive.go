@@ -60,21 +60,28 @@ func deriveRandom(
 	return out[:keyBytes], nil
 }
 
-// deriveKey is DK() of RFC 3961 section 5.1: random-to-key(DR(key,
+// deriveDK is DK() of RFC 3961 section 5.1: random-to-key(DR(key,
 // constant)).
 //
 // For the AES types random-to-key is the identity, so this is DR with
 // the output taken as a key directly. It is kept as its own step
-// because the DES3 types do fix parity bits here, and a later enctype
-// family will need somewhere to do its own.
-func deriveKey(
-	key, constant []byte,
-	keyBytes int,
+// because the DES3 types do fix parity bits here, and because RFC
+// 8009's family needed somewhere of its own to go -- which it now
+// has, in deriveSP800108.
+//
+// The base key's length is checked against the row's, not against the
+// requested output: a 16-byte key cannot derive anything for an
+// aes256 enctype, and the n-fold would otherwise produce a
+// plausible-looking key from it.
+func deriveDK(
+	p *EncProfile,
+	base, label []byte,
+	outLen int,
 ) ([]byte, error) {
-	if len(key) != keyBytes {
+	if len(base) != p.KeyLength {
 		return nil, fmt.Errorf(
 			"key is %d bytes, want %d",
-			len(key), keyBytes)
+			len(base), p.KeyLength)
 	}
-	return deriveRandom(key, constant, keyBytes)
+	return deriveRandom(base, label, outLen)
 }

@@ -4,7 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha1"
 	"errors"
 	"fmt"
 )
@@ -15,20 +14,9 @@ var ErrIntegrity = errors.New("integrity check failed")
 
 // Encrypt encrypts plain under key for the given usage.
 //
-// The message is
-//
-//	E(Ke, conf || plain) || HMAC(Ki, conf || plain)
-//
-// truncated to the enctype's trailer length -- the RFC 3961 "dk"
-// profile. Two things about it are easy to get wrong and both are
-// deliberate here:
-//
-// The HMAC covers the *plaintext*, not the ciphertext. This is
-// MAC-then-encrypt, which the newer aes-sha2 types replace with
-// encrypt-then-MAC; that difference is exactly why these live in a
-// table rather than being the one true way to encrypt.
-//
-// There is no padding. Ciphertext stealing makes the encryption
+// The layout is the enctype's own; this derives the two subkeys and
+// hands them to the row's seal function. There is no padding in
+// either family: ciphertext stealing makes the encryption
 // length-preserving, so PaddingLength is 0 and the output is always
 // header + len(plain) + trailer.
 func (p *EncProfile) Encrypt(
@@ -39,23 +27,7 @@ func (p *EncProfile) Encrypt(
 	if err != nil {
 		return nil, err
 	}
-
-	confounded := make([]byte, p.HeaderLength+len(plain))
-	if _, err := rand.Read(
-		confounded[:p.HeaderLength]); err != nil {
-		return nil, err
-	}
-	copy(confounded[p.HeaderLength:], plain)
-
-	block, err := aes.NewCipher(ke)
-	if err != nil {
-		return nil, err
-	}
-	ct, err := ctsEncrypt(block, nil, confounded)
-	if err != nil {
-		return nil, err
-	}
-	return append(ct, p.tag(ki, confounded)...), nil
+	return p.seal(p, ke, ki, plain)
 }
 
 // Decrypt reverses Encrypt, checking the integrity tag before
@@ -74,7 +46,44 @@ func (p *EncProfile) Decrypt(
 	if err != nil {
 		return nil, err
 	}
+	return p.open(p, ke, ki, ct)
+}
 
+// sealDK is the RFC 3961 "dk" profile's layout:
+//
+//	E(Ke, conf || plain) || HMAC(Ki, conf || plain)
+//
+// truncated to the trailer length. The HMAC covers the *plaintext*,
+// not the ciphertext -- MAC-then-encrypt, which RFC 8009 replaces
+// with the reverse. That difference is the whole reason these are
+// rows in a table and not one true way to encrypt.
+func sealDK(
+	p *EncProfile,
+	ke, ki, plain []byte,
+) ([]byte, error) {
+	confounded := make([]byte, p.HeaderLength+len(plain))
+	if _, err := rand.Read(
+		confounded[:p.HeaderLength]); err != nil {
+		return nil, err
+	}
+	copy(confounded[p.HeaderLength:], plain)
+
+	block, err := aes.NewCipher(ke)
+	if err != nil {
+		return nil, err
+	}
+	ct, err := ctsEncrypt(block, nil, confounded)
+	if err != nil {
+		return nil, err
+	}
+	return append(ct, p.tag(ki, confounded)...), nil
+}
+
+// openDK reverses sealDK.
+func openDK(
+	p *EncProfile,
+	ke, ki, ct []byte,
+) ([]byte, error) {
 	body := ct[:len(ct)-p.TrailerLength]
 	want := ct[len(ct)-p.TrailerLength:]
 
@@ -97,12 +106,16 @@ func (p *EncProfile) Decrypt(
 
 // Checksum computes the keyed checksum for a message: HMAC under Kc,
 // truncated to the checksum type's length.
+//
+// Both families compute it the same way once Kc is in hand, so this
+// is not a per-row function -- what differs is how Kc is derived and
+// how long it is, and both of those are already in the row.
 func (p *EncProfile) Checksum(
 	key, msg []byte,
 	usage Usage,
 ) ([]byte, error) {
-	kc, err := deriveKey(
-		key, usageConstant(usage, constKc), p.KeyLength)
+	kc, err := p.derive(p, key, usageConstant(usage, constKc),
+		p.integrityKeyLength)
 	if err != nil {
 		return nil, err
 	}
@@ -125,27 +138,32 @@ func (p *EncProfile) VerifyChecksum(
 }
 
 // subkeys derives the encryption and integrity keys for a usage.
+//
+// Ke is the cipher's key length and Ki is the row's integrity key
+// length, which are the same thing for RFC 3962 and are not for RFC
+// 8009 -- an aes256-sha384 Ki is 24 bytes against a 32-byte Ke.
 func (p *EncProfile) subkeys(
 	key []byte,
 	usage Usage,
 ) (ke, ki []byte, err error) {
-	ke, err = deriveKey(
-		key, usageConstant(usage, constKe), p.KeyLength)
+	ke, err = p.derive(p, key, usageConstant(usage, constKe),
+		p.KeyLength)
 	if err != nil {
 		return nil, nil, err
 	}
-	ki, err = deriveKey(
-		key, usageConstant(usage, constKi), p.KeyLength)
+	ki, err = p.derive(p, key, usageConstant(usage, constKi),
+		p.integrityKeyLength)
 	if err != nil {
 		return nil, nil, err
 	}
 	return ke, ki, nil
 }
 
-// tag is HMAC-SHA1 truncated to the enctype's trailer length, which
-// for these types is 96 bits of the 160 SHA-1 produces.
+// tag is the keyed HMAC truncated to the enctype's trailer length: 96
+// bits of SHA-1's 160 for RFC 3962, and exactly half the hash for RFC
+// 8009.
 func (p *EncProfile) tag(key, msg []byte) []byte {
-	m := hmac.New(sha1.New, key)
+	m := hmac.New(p.newHash, key)
 	m.Write(msg)
 	return m.Sum(nil)[:p.TrailerLength]
 }

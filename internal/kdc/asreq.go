@@ -290,14 +290,9 @@ func minLife(a, b int32) int32 {
 }
 
 // sessionKey makes the ticket's session key.
-//
-// The enctype is chosen from the request's list by
-// select_session_keytype (kdc/kdc_util.c:1085-1111), which takes the
-// first entry the *server* has a key for -- not the one the client
-// key used. The two usually agree and need not.
 func (k *KDC) sessionKey(s *asState) error {
-	e := k.sessionEType(s)
-	key, err := randomKey(e)
+	key, e, err := k.makeSessionKey(
+		s.req.Body.EType, s.server, s.clientEType)
 	if err != nil {
 		return err
 	}
@@ -306,6 +301,39 @@ func (k *KDC) sessionKey(s *asState) error {
 		KeyValue: key,
 	}
 	return nil
+}
+
+// makeSessionKey is select_session_keytype (kdc/kdc_util.c:1085-1111)
+// followed by a fresh random key of that enctype.
+//
+// The enctype is the first entry of the *request's* list that the
+// server has a key for, in the client's order. Two things it is not:
+// the enctype the client's own long-term key uses, and the enctype of
+// the server's first key. Those three coincide in a realm with one
+// enctype and diverge immediately in one with four.
+//
+// fallback is used when the request names nothing the server can
+// satisfy, which upstream answers with 0 and its caller then refuses;
+// here the caller has already established a usable key, so falling
+// back to it issues a ticket rather than refusing one the client
+// could read.
+func (k *KDC) makeSessionKey(
+	requested []int32,
+	server *store.Principal,
+	fallback crypto.EncType,
+) ([]byte, crypto.EncType, error) {
+	e := fallback
+	for _, want := range requested {
+		start := 0
+		_, _, err := k.Store.Key(server, &start, want,
+			store.AnySaltType, store.HighestKVNO)
+		if err == nil {
+			e = crypto.EncType(want)
+			break
+		}
+	}
+	key, err := randomKey(e)
+	return key, e, err
 }
 
 // randomKey makes a fresh key of an enctype's length.
@@ -319,16 +347,4 @@ func randomKey(e crypto.EncType) ([]byte, error) {
 		return nil, err
 	}
 	return key, nil
-}
-
-func (k *KDC) sessionEType(s *asState) crypto.EncType {
-	for _, e := range s.req.Body.EType {
-		start := 0
-		_, _, err := k.Store.Key(s.server, &start, e,
-			store.AnySaltType, store.HighestKVNO)
-		if err == nil {
-			return crypto.EncType(e)
-		}
-	}
-	return s.clientEType
 }

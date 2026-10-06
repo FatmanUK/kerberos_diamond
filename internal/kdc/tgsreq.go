@@ -527,15 +527,17 @@ func (k *KDC) tgsRenewTime(s *tgsState) uint32 {
 }
 
 // tgsSessionKey makes the new ticket's session key.
+//
+// The enctype is select_session_keytype's: the first entry of the
+// *request's* list that the server has a key for
+// (kdc/kdc_util.c:1085-1111). It is emphatically not the server's
+// first key -- that is what seals the ticket, and the two differ as
+// soon as a realm holds more than one enctype. Reading it from the
+// server's key was this implementation's bug until the aes-sha2
+// family arrived and the differential harness caught it.
 func (k *KDC) tgsSessionKey(s *tgsState) error {
-	e := s.serverEType
-	for _, want := range s.req.Body.EType {
-		if want == int32(s.serverEType) {
-			e = s.serverEType
-			break
-		}
-	}
-	key, err := randomKey(e)
+	key, e, err := k.makeSessionKey(
+		s.req.Body.EType, s.server, s.serverEType)
 	if err != nil {
 		return err
 	}

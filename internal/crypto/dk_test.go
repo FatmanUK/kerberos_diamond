@@ -195,10 +195,14 @@ func TestProfileLookup(t *testing.T) {
 }
 
 // The preference order is what a KDC offers and a client picks from,
-// so aes256 coming first is behaviour, not decoration.
-func TestSupportedPrefersAES256(t *testing.T) {
+// so aes256 coming first is behaviour, not decoration. The strongest
+// enctype comes first, because Supported() is what a KDC offers a
+// client as its own preference. Which one that is moved when the
+// aes-sha2 family landed; TestSHA2IsPreferred pins the whole order.
+func TestSupportedPrefersTheStrongest(t *testing.T) {
 	got := Supported()
-	if len(got) == 0 || got[0] != AES256CTSHMACSHA196 {
-		t.Errorf("Supported() = %v, want aes256 first", got)
+	if len(got) == 0 || got[0] != AES256CTSHMACSHA384192 {
+		t.Errorf("Supported() = %v, want aes256-sha384 first",
+			got)
 	}
 }

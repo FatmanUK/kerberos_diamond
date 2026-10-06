@@ -1,16 +1,28 @@
 // Package crypto implements the Kerberos 5 encryption types.
 //
-// Two are supported: aes256-cts-hmac-sha1-96 and
-// aes128-cts-hmac-sha1-96, the RFC 3962 pair an unconfigured client
-// negotiates. They are reached through a dispatch table rather than
-// called directly, even at two entries, because the families that
-// follow derive keys by entirely different schemes and have to be
-// rows in this table rather than special cases beside it.
+// Four are supported, in two families. RFC 3962's
+// aes256-cts-hmac-sha1-96 and aes128-cts-hmac-sha1-96 are what an
+// unconfigured client negotiates; RFC 8009's
+// aes256-cts-hmac-sha384-192 and aes128-cts-hmac-sha256-128 are what
+// a modern realm prefers.
+//
+// The two families share almost nothing. RFC 3962 derives keys by
+// n-folding a constant and encrypting it repeatedly, and MACs the
+// *plaintext* before encrypting. RFC 8009 derives with a counter-mode
+// HMAC and MACs the *ciphertext* after encrypting. So the row in the
+// dispatch table carries the two differing steps as functions rather
+// than the table being consulted and then switched on: a switch would
+// put that difference in four places instead of one, and adding a
+// third family would mean finding all four.
 package crypto
 
 import (
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"errors"
 	"fmt"
+	"hash"
 )
 
 // EncType is a Kerberos encryption type number, as it appears on the
@@ -22,14 +34,18 @@ type CksumType int32
 
 // The encryption types this package implements.
 const (
-	AES128CTSHMACSHA196 EncType = 17
-	AES256CTSHMACSHA196 EncType = 18
+	AES128CTSHMACSHA196    EncType = 17
+	AES256CTSHMACSHA196    EncType = 18
+	AES128CTSHMACSHA256128 EncType = 19
+	AES256CTSHMACSHA384192 EncType = 20
 )
 
 // The checksum types that go with them.
 const (
-	HMACSHA196AES128 CksumType = 15
-	HMACSHA196AES256 CksumType = 16
+	HMACSHA196AES128    CksumType = 15
+	HMACSHA196AES256    CksumType = 16
+	HMACSHA256128AES128 CksumType = 19
+	HMACSHA384192AES256 CksumType = 20
 )
 
 // ErrUnsupported reports an encryption or checksum type this package
@@ -75,33 +91,133 @@ type EncProfile struct {
 	// request carries no s2kparams, and also the floor below
 	// which a supplied count is refused.
 	DefaultIterations uint32
+
+	// newHash is the hash every HMAC and the PBKDF2 use.
+	newHash func() hash.Hash
+
+	// integrityKeyLength is how long Ki and Kc are.
+	//
+	// It is not always the key length. RFC 3962 derives all three
+	// subkeys at the cipher's key length; RFC 8009 derives Ke at
+	// the key length but Ki and Kc at *half the hash size*
+	// (enc_etm.c:75-78, checksum_etm.c:45-48), which for
+	// aes256-sha384 is 24 bytes against a 32-byte key.
+	integrityKeyLength int
+
+	// s2kPepper prefixes the salt, with a NUL between them,
+	// before PBKDF2 sees it.
+	//
+	// RFC 8009 puts the enctype's own name there
+	// (krb5int_aes2_string_to_key, s2k_pbkdf2.c:196-203), so the
+	// same password and salt give different keys for the two
+	// aes-sha2 types. RFC 3962 has no pepper, and the empty
+	// string here means none rather than an empty prefix plus a
+	// NUL.
+	s2kPepper string
+
+	// derive, seal and open are the two steps the families do
+	// differently. They are package functions taking the row, not
+	// methods, so that a row literal can name them.
+	derive deriveFunc
+	seal   sealFunc
+	open   openFunc
 }
 
+// The three per-family operations.
+//
+// derive produces one subkey of outLen bytes from a base key and a
+// five-byte label. seal and open are the message layout: which of the
+// plaintext and the ciphertext the MAC covers, and in what order.
+type (
+	deriveFunc func(
+		p *EncProfile,
+		base, label []byte,
+		outLen int,
+	) ([]byte, error)
+
+	sealFunc func(
+		p *EncProfile,
+		ke, ki, plain []byte,
+	) ([]byte, error)
+
+	openFunc func(
+		p *EncProfile,
+		ke, ki, ct []byte,
+	) ([]byte, error)
+)
+
 // profiles is the dispatch table, searched linearly as upstream's is
-// (lib/crypto/krb/etypes.c:37-148). Two entries do not need an index,
-// and a slice keeps the preference order visible.
+// (lib/crypto/krb/etypes.c:37-148). Four entries do not need an
+// index, and a slice keeps the preference order visible -- which
+// matters, because Supported() hands this order to a client as the
+// KDC's own preference and the aes-sha2 pair belongs ahead of the
+// aes-sha1 one.
 var profiles = []EncProfile{
 	{
-		EncType:           AES256CTSHMACSHA196,
-		Name:              "aes256-cts-hmac-sha1-96",
-		KeyLength:         32,
-		BlockSize:         16,
-		HeaderLength:      16,
-		PaddingLength:     0,
-		TrailerLength:     12,
-		RequiredCksum:     HMACSHA196AES256,
-		DefaultIterations: 4096,
+		EncType:            AES256CTSHMACSHA384192,
+		Name:               "aes256-cts-hmac-sha384-192",
+		KeyLength:          32,
+		BlockSize:          16,
+		HeaderLength:       16,
+		PaddingLength:      0,
+		TrailerLength:      24,
+		RequiredCksum:      HMACSHA384192AES256,
+		DefaultIterations:  32768,
+		newHash:            sha512.New384,
+		integrityKeyLength: 24,
+		s2kPepper:          "aes256-cts-hmac-sha384-192",
+		derive:             deriveSP800108,
+		seal:               sealETM,
+		open:               openETM,
 	},
 	{
-		EncType:           AES128CTSHMACSHA196,
-		Name:              "aes128-cts-hmac-sha1-96",
-		KeyLength:         16,
-		BlockSize:         16,
-		HeaderLength:      16,
-		PaddingLength:     0,
-		TrailerLength:     12,
-		RequiredCksum:     HMACSHA196AES128,
-		DefaultIterations: 4096,
+		EncType:            AES128CTSHMACSHA256128,
+		Name:               "aes128-cts-hmac-sha256-128",
+		KeyLength:          16,
+		BlockSize:          16,
+		HeaderLength:       16,
+		PaddingLength:      0,
+		TrailerLength:      16,
+		RequiredCksum:      HMACSHA256128AES128,
+		DefaultIterations:  32768,
+		newHash:            sha256.New,
+		integrityKeyLength: 16,
+		s2kPepper:          "aes128-cts-hmac-sha256-128",
+		derive:             deriveSP800108,
+		seal:               sealETM,
+		open:               openETM,
+	},
+	{
+		EncType:            AES256CTSHMACSHA196,
+		Name:               "aes256-cts-hmac-sha1-96",
+		KeyLength:          32,
+		BlockSize:          16,
+		HeaderLength:       16,
+		PaddingLength:      0,
+		TrailerLength:      12,
+		RequiredCksum:      HMACSHA196AES256,
+		DefaultIterations:  4096,
+		newHash:            sha1.New,
+		integrityKeyLength: 32,
+		derive:             deriveDK,
+		seal:               sealDK,
+		open:               openDK,
+	},
+	{
+		EncType:            AES128CTSHMACSHA196,
+		Name:               "aes128-cts-hmac-sha1-96",
+		KeyLength:          16,
+		BlockSize:          16,
+		HeaderLength:       16,
+		PaddingLength:      0,
+		TrailerLength:      12,
+		RequiredCksum:      HMACSHA196AES128,
+		DefaultIterations:  4096,
+		newHash:            sha1.New,
+		integrityKeyLength: 16,
+		derive:             deriveDK,
+		seal:               sealDK,
+		open:               openDK,
 	},
 }
 

@@ -15,40 +15,41 @@ var (
 			"BB52280990A2FA27883998D72AF30161")
 )
 
-// Kc, Ke and Ki for usage 2, from upstream's
+// dkDeriveCases are the RFC 3961 Kc/Ke/Ki vectors, from upstream's
 // lib/crypto/crypto_tests/t_derive.c.
-func TestDeriveKey(t *testing.T) {
-	cases := []struct {
-		name  string
-		base  []byte
-		which byte
-		want  []byte
-	}{
-		{"aes128 Kc", aes128Base, constKc,
-			hx("34280A382BC92769B2DA2F9EF066854B")},
-		{"aes128 Ke", aes128Base, constKe,
-			hx("5B14FC4E250E14DDF9DCCF1AF6674F53")},
-		{"aes128 Ki", aes128Base, constKi,
-			hx("4ED31063621684F09AE8D89991AF3E8F")},
-		{"aes256 Kc", aes256Base, constKc,
-			hx("BFAB388BDCB238E9F9C98D6A878304F0" +
-				"4D30C82556375AC507A7A852790F4674")},
-		{"aes256 Ke", aes256Base, constKe,
-			hx("C7CFD9CD75FE793A586A542D87E0D139" +
-				"6F1134A104BB1A9190B8C90ADA3DDF37")},
-		{"aes256 Ki", aes256Base, constKi,
-			hx("97151B4C76945063E2EB0529DC067D97" +
-				"D7BBA90776D8126D91F34F3101AEA8BA")},
-	}
+var dkDeriveCases = []struct {
+	name  string
+	base  []byte
+	which byte
+	want  []byte
+}{
+	{"aes128 Kc", aes128Base, constKc,
+		hx("34280A382BC92769B2DA2F9EF066854B")},
+	{"aes128 Ke", aes128Base, constKe,
+		hx("5B14FC4E250E14DDF9DCCF1AF6674F53")},
+	{"aes128 Ki", aes128Base, constKi,
+		hx("4ED31063621684F09AE8D89991AF3E8F")},
+	{"aes256 Kc", aes256Base, constKc,
+		hx("BFAB388BDCB238E9F9C98D6A878304F0" +
+			"4D30C82556375AC507A7A852790F4674")},
+	{"aes256 Ke", aes256Base, constKe,
+		hx("C7CFD9CD75FE793A586A542D87E0D139" +
+			"6F1134A104BB1A9190B8C90ADA3DDF37")},
+	{"aes256 Ki", aes256Base, constKi,
+		hx("97151B4C76945063E2EB0529DC067D97" +
+			"D7BBA90776D8126D91F34F3101AEA8BA")},
+}
 
-	for _, tc := range cases {
+func TestDeriveKey(t *testing.T) {
+	for _, tc := range dkDeriveCases {
 		t.Run(tc.name, func(t *testing.T) {
+			p := sha1ProfileFor(t, len(tc.base))
 			c := usageConstant(
 				UsageKDCRepTicket, tc.which)
-			got, err := deriveKey(
-				tc.base, c, len(tc.base))
+			got, err := p.derive(
+				p, tc.base, c, len(tc.base))
 			if err != nil {
-				t.Fatalf("deriveKey: %v", err)
+				t.Fatalf("derive: %v", err)
 			}
 			if !bytes.Equal(got, tc.want) {
 				t.Errorf("\n got %X\nwant %X",
@@ -78,10 +79,11 @@ func TestUsageConstant(t *testing.T) {
 func TestDerivedKeysDiffer(t *testing.T) {
 	var keys [][]byte
 	for _, which := range []byte{constKc, constKe, constKi} {
+		p := sha1ProfileFor(t, len(aes256Base))
 		c := usageConstant(UsageASRepEncPart, which)
-		k, err := deriveKey(aes256Base, c, len(aes256Base))
+		k, err := p.derive(p, aes256Base, c, len(aes256Base))
 		if err != nil {
-			t.Fatalf("deriveKey: %v", err)
+			t.Fatalf("derive: %v", err)
 		}
 		keys = append(keys, k)
 	}
@@ -97,12 +99,13 @@ func TestDerivedKeysDiffer(t *testing.T) {
 // Different usages must derive different keys, which is what keeps a
 // ticket's enc-part key apart from the reply's.
 func TestDifferentUsagesDiffer(t *testing.T) {
-	a, err := deriveKey(aes256Base,
+	p := sha1ProfileFor(t, 32)
+	a, err := p.derive(p, aes256Base,
 		usageConstant(UsageKDCRepTicket, constKe), 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := deriveKey(aes256Base,
+	b, err := p.derive(p, aes256Base,
 		usageConstant(UsageASRepEncPart, constKe), 32)
 	if err != nil {
 		t.Fatal(err)
@@ -115,9 +118,29 @@ func TestDifferentUsagesDiffer(t *testing.T) {
 // A key of the wrong length is a programming error, not something to
 // derive from anyway.
 func TestDeriveKeyChecksLength(t *testing.T) {
-	_, err := deriveKey(aes128Base,
+	p := sha1ProfileFor(t, 32)
+	_, err := p.derive(p, aes128Base,
 		usageConstant(UsageASRepEncPart, constKe), 32)
 	if err == nil {
 		t.Error("derived a 32-byte key from a 16-byte one")
 	}
+}
+
+// sha1ProfileFor is the RFC 3962 row with the given key length.
+//
+// These vectors are that family's, so the row has to be chosen by key
+// length rather than by whichever enctype happens to come first in
+// the table -- the aes-sha2 rows have the same key lengths and an
+// entirely different derivation.
+func sha1ProfileFor(t *testing.T, keyLen int) *EncProfile {
+	t.Helper()
+	e := AES256CTSHMACSHA196
+	if keyLen == 16 {
+		e = AES128CTSHMACSHA196
+	}
+	p, err := Profile(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

@@ -33,11 +33,10 @@ that have aged worst in the C:
   malformed frame, a padata-free single round trip, the PA-ENC-TIMESTAMP path,
   TCP-only transport, a TGT in the credential cache, and a wrong password
   being refused as a wrong password.
-- **`internal/crypto` is done** for the two RFC 3962 AES types: the enctype
-  table, n-fold, DR/DK derivation, PBKDF2 string-to-key, AES-CTS, and the
-  HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
-  checked, and the default salt is cross-checked against what the C KDC
-  actually computes.
+- **`internal/crypto` covers four enctypes in two families**: RFC 3962's
+  aes256- and aes128-cts-hmac-sha1-96 and RFC 8009's aes-sha2 pair. Every
+  vector upstream publishes for all four is checked, and the default salt is
+  cross-checked against what the C KDC actually computes.
 - **A realm can be provisioned with `kdiamond` alone**, and a stock `kinit`
   then uses it. The administrative commands are exercised as a *binary* with
   arguments rather than by calling the functions behind them, so a flag that
@@ -102,14 +101,14 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 **What is next, in the plan file's order:**
 
-1. **The remaining enctypes**, aes-sha2 (RFC 8009) first, because its
-   KDF-HMAC-SHA2 derivation is a genuinely different scheme and will prove
-   the enctype dispatch table is a table and not a special case.
-2. **The TGS cases nothing issues yet** — forwarding, proxying and
-   user-to-user — each of which has its refusal path ported already.
-3. **Argon2id**, per §3.3: new keys written with it, legacy string-to-key
+1. **Argon2id**, per §3.3: new keys written with it, legacy string-to-key
    read but never written. A deliberate divergence, so it needs its own
    golden exemption rather than a comparison.
+2. **The TGS cases nothing issues yet** — forwarding, proxying and
+   user-to-user — each of which has its refusal path ported already.
+3. **Crash-only and high availability**, the 12-factor work this project
+   exists for. It is testable now: there is a KDC worth restarting
+   mid-exchange.
 
 ## 3. Project State
 
@@ -210,6 +209,29 @@ are not "fixed" back by accident.
   fixed password gives a reproducible master key and reproducible stored
   keys. The realm is built at container start rather than baked into the
   image, so each run begins from an identical database with no history.
+**Encryption types:**
+
+- **Four, in two families, and the table really is a table.** RFC 3962's
+  aes256- and aes128-cts-hmac-sha1-96 and RFC 8009's
+  aes256-cts-hmac-sha384-192 and aes128-cts-hmac-sha256-128. The two
+  families share almost nothing — one derives keys by n-folding a constant
+  and encrypting it and MACs the *plaintext*; the other derives with a
+  counter-mode HMAC and MACs the *ciphertext* — so the row carries those two
+  steps as functions. A switch on the enctype would have put that difference
+  in four places instead of one.
+- **The aes-sha2 pair is preferred**, which `Supported()` reports and the KDC
+  offers. A stock MIT *client* still asks for the sha1 pair first
+  (`default_enctype_list`, `lib/krb5/krb/init_ctx.c:59-66`), and the client's
+  order is what decides which of its long-term keys the reply is encrypted
+  under. The KDC's order decides the session key and which key seals a
+  ticket. Two orders, two jobs.
+- **The oracle's realm is configured for all four.** MIT's default
+  `supported_enctypes` is only the sha1 pair (`include/osconf.hin:109-111`),
+  so a realm left at the default could never exercise the new family through
+  the harness. The list is in the same order `Supported()` reports, because
+  the KDC seals a ticket with the *first* key of a principal's highest key
+  version whatever its enctype.
+
 **The TGS exchange:**
 
 - **Renewal, validation and postdating issue tickets; the rest is refused.**
@@ -418,12 +440,15 @@ tests. It is green.
   unset, the duration parse, and that a bad environment reports *every*
   missing variable rather than the first.
 - **`internal/crypto`** — covered, and anchored rather than
-  self-consistent. Every n-fold vector from `t_nfold.c`, every RFC 3962
-  appendix B string-to-key vector from `t_str2key.c`, all six AES Kc/Ke/Ki
-  derivations from `t_derive.c`, and both AES keyed-checksum vectors from
-  `t_cksums.c`. Plus the negative cases that a round-trip test cannot reach:
-  tampering, a wrong key usage, a truncated ciphertext, and a weak iteration
-  count.
+  self-consistent. For RFC 3962: every n-fold vector from `t_nfold.c`, every
+  appendix B string-to-key vector from `t_str2key.c`, all six Kc/Ke/Ki
+  derivations from `t_derive.c`, and both keyed-checksum vectors from
+  `t_cksums.c`. For RFC 8009: the six derivations, both string-to-key
+  results, all eight published *ciphertexts* — decrypted, because a random
+  confounder makes encrypt-and-compare impossible and a round trip would pass
+  with the MAC over entirely the wrong bytes — and both checksums. Plus the
+  negative cases a round trip cannot reach: tampering, a wrong key usage, a
+  truncated ciphertext, and a weak iteration count.
 - **One gap, deliberate and recorded.** Multi-block AES-CTS is round-tripped
   and checked against plain CBC with the final two blocks swapped, but is not
   anchored to a published vector: upstream's `t_cts.c` prints its results
