@@ -55,6 +55,16 @@ that have aged worst in the C:
   presents *one* TGT to both implementations in the same encoded TGS-REQ —
   they share the fixture's krbtgt key, so the same ticket is valid at either —
   and compares the two replies field for field with both halves decrypted.
+- **The TGS exchange issues everything it can now**: forwarding, proxying and
+  user-to-user, where before each had only its refusal path. The golden
+  harness compares all three against the C. User-to-user is the interesting
+  one — it is the single case where the issued ticket is sealed with no
+  long-term key at all, but with the session key out of a second ticket the
+  client presents, so a principal with a password and no keytab can be
+  reached. The realm fixture gained a `peer` principal with DISALLOW_SVR set
+  for it, which makes the test prove something: an ordinary request for that
+  principal is refused by both KDCs, and only the user-to-user request
+  succeeds.
 - **The vertical slice is closed, and a stock `kinit` proves it.** An
   unmodified `kinit` built from the `kerberos/` submodule obtains a TGT from
   the Go KDC through `kdiamond-proxy`, on both the padata-free and the
@@ -101,13 +111,22 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 **What is next, in the plan file's order:**
 
-1. **The TGS cases nothing issues yet** — forwarding, proxying and
-   user-to-user — each of which has its refusal path ported already.
-2. **Beyond the plan.** Everything the plan file listed is done. The obvious
-   next things, none of them planned yet: cross-realm, FAST, the Windows PAC,
-   S4U2Self and S4U2Proxy, a `kadmin` protocol for provisioning from off-host,
-   and a client built with a TLS module so the HTTPS leg is covered end to end
-   without the shim.
+Everything the plan file listed is done, so this list is now the live one.
+**Windows and Active Directory interop goes last, deliberately** — see §3.3.
+
+1. ~~**The TGS cases nothing issues yet**~~ — forwarding, proxying and
+   user-to-user. Done, and they found three divergences between them; see §6.
+2. **Cross-realm.** The transited-path machinery is refused rather than
+   evaluated, and a realm that cannot trust another is not much of a realm.
+3. **FAST** (RFC 6113), which would also let the KDC stop declining to
+   advertise it — currently the harness's one declared exemption.
+4. **A `kadmin` protocol**, for provisioning from off-host. The `kdiamond`
+   subcommands need a shell on the KDC's machine; something external
+   eventually will not have one.
+5. **A client built with a TLS module**, so the HTTPS leg is covered end to
+   end without `kdiamond-proxy` in the way.
+6. **The Windows PAC**, last but one.
+7. **S4U2Self and S4U2Proxy**, last.
 
 ## 3. Project State
 
@@ -233,17 +252,29 @@ are not "fixed" back by accident.
 
 **The TGS exchange:**
 
-- **Renewal, validation and postdating issue tickets; the rest is refused.**
-  A client spends a TGT for a service ticket, renews a renewable ticket,
-  validates a postdated one, and can ask for a postdated ticket in the first
-  place. Forwarding, proxying and user-to-user (`ENC-TKT-IN-SKEY`) are
-  *refused* rather than ignored — their policy rules are ported so a request
-  asking for one gets the error upstream would give, but nothing issues such a
-  ticket. Neither S4U2Self nor S4U2Proxy, nor cross-realm.
+- **Everything but S4U and cross-realm issues a ticket.** A client spends a
+  TGT for a service ticket, renews a renewable ticket, validates a postdated
+  one, asks for a postdated ticket, forwards and proxies, and reaches a
+  principal with no keytab by user-to-user (`ENC-TKT-IN-SKEY`). What is left
+  refused is S4U2Self, S4U2Proxy and cross-realm.
+- **S4U2Proxy is refused, not ignored.** `KDC_OPT_CNAME_IN_ADDL_TKT` means the
+  request is asking for a ticket on another principal's behalf; answering it
+  as an ordinary request would issue a ticket naming the wrong client
+  entirely, which is worse than saying no. It gets `KDC_ERR_BADOPTION`.
+- **User-to-user is the one case with no long-term key in it.** The issued
+  ticket is sealed with the session key out of the second ticket the client
+  presents, and names no key version at all (`do_tgs_req.c:1056-1061`),
+  because a session key has none. That is also why `DISALLOW_SVR` does not
+  forbid it (`check_tgs_svc_deny_all`, `kdc/tgs_policy.c:152-156`): a
+  principal that may not be a service may still be reached this way, and
+  refusing it would refuse the only mechanism that works for a user.
 - **A renewal or validation naming a different server than the ticket is
-  refused**, which upstream does not do. It names the issued ticket after the
-  *presented* ticket's server (`do_tgs_req.c:1012-1016`) while sealing it with
-  the key of the server the *request* asked for, and nothing checks the two
+  refused**, which upstream does not do — though it *does* make exactly this
+  check for forwarding and proxying, from the same function
+  (`check_tgs_nontgt`, `kdc/tgs_policy.c:632-647`). It names the issued ticket
+  after the *presented* ticket's server (`do_tgs_req.c:1012-1016`) while
+  sealing it with the key of the server the *request* asked for, and nothing
+  checks the two
   agree — so a mismatched request gets a ticket whose name and key belong to
   different principals, refused with `BAD_INTEGRITY` by whoever receives it.
   This answers `KDC_ERR_SERVER_NOMATCH` instead, whose name is exactly the
@@ -253,10 +284,14 @@ are not "fixed" back by accident.
   — "Don't use a replay cache" (`kdc/kdc_util.c:188`) — so the authenticator's
   clock skew is the whole of the replay window, as it is there. A KDC that
   added one here would diverge.
-- **Addresses are not checked.** Upstream compares the request's source
-  address against the ticket's address list when it has one
-  (`kdc_util.c:196-202`); the realm fixture sets `noaddresses = true`, so
-  there is nothing to compare, and the check is not written.
+- **Addresses are carried but never read.** They travel as opaque DER: a
+  forwarded or proxied ticket takes the request's addresses rather than the
+  presented ticket's and the reply repeats them, which is upstream's behaviour
+  (`do_tgs_req.c:1019-1027`), but nothing here parses one. Nor is the *source*
+  address checked: upstream compares the request's against the ticket's list
+  when it has one (`kdc_util.c:196-202`), and the realm fixture sets
+  `noaddresses = true`, so there is nothing to compare and the check is not
+  written.
 - **Only an empty transited path is accepted.** Upstream runs
   `kdc_check_transited_list` and sets `TKT_FLG_TRANSIT_POLICY_CHECKED` when it
   passes, refusing the request when it does not — `reject_bad_transit`
@@ -291,6 +326,17 @@ are not "fixed" back by accident.
   (`kdc/kdc_util.c:677-688`); matching the stub is deliberate, because
   implementing last-req properly would diverge from every C transcript
   immediately.
+
+**Priorities:**
+
+- **Windows and Active Directory interop goes last.** The MS-PAC, S4U2Self
+  and S4U2Proxy are deprioritised behind every piece of standard-Kerberos
+  work, because this realm's operator will not be using them. They sit near
+  each other in upstream's code and it is easy to assume a cluster of related
+  features; cross-realm, FAST, forwarding, proxying and user-to-user are not
+  Windows features and come first even where they are larger. Deprioritised,
+  not abandoned: if a Windows feature turns out to be the only way to finish
+  something else, that is worth saying rather than quietly reordering.
 
 **Crash-only and high availability:**
 
@@ -562,6 +608,19 @@ tests. It is green.
   mismatched client name, a stale clock, and a request asking for a flag its
   TGT does not carry. Each asserts the *specific* protocol error, because
   they are different codes and a client acts on them differently.
+- **Forwarding, proxying and user-to-user** — covered in process and
+  differentially. The forwarded and proxied cases follow the addresses: the
+  issued ticket takes the *request's* rather than the presented ticket's, the
+  reply repeats them under its own `[11]` tag, and an ordinary request leaves
+  the reply's field absent. Proxying is exercised against a real service
+  ticket obtained the ordinary way first, because that is what it
+  re-addresses. The user-to-user cases decrypt the issued ticket with the
+  session key out of the second ticket — nothing short of that proves which
+  key sealed it — and the refusals are each asserted by their own code: no
+  second ticket, a second ticket that is not a TGT, and one whose client is
+  not the principal asked for. S4U2Proxy is asserted to be *refused* rather
+  than quietly answered, because answering it as an ordinary request would
+  issue a ticket for the wrong client.
 - **Renewal and validation** — covered in process, differentially, and with a
   stock `kinit -R`. The in-process cases pin the KDC's clock to move time
   forward, and the client's clock with it: an authenticator left behind is
@@ -586,6 +645,28 @@ tests. It is green.
   PA-ETYPE-INFO2 in the reply, a transited type of 0 instead of 1, and the
   two consequences of the Windows PAC. Reading the C and reasoning about it
   had already missed all four.
+- **It found three more when forwarding, proxying and user-to-user landed**,
+  and this time none of them was a missing field. Upstream requires a
+  forwarded or proxied request to name the same server its presented ticket
+  does — `NON_TGT_OPTION` covers all four of forwarded, proxy, renew and
+  validate (`kdc/kdc_util.h:455-456`), where this implementation had checked
+  only the latter two, and the C refused with `SERVER_NOMATCH` while the Go
+  side issued a ticket. Chasing that turned up a second gap in the same
+  function's other branch: `check_tgs_tgt` (`kdc/tgs_policy.c:653-665`)
+  refuses an ordinary request that presents anything but a ticket-granting
+  ticket, and nothing here had refused it, so any service ticket would have
+  served as a TGT. The third came out of the test written for the first:
+  `krb5_principal_compare` never looks at a name's *type*
+  (`lib/krb5/krb/princ_comp.c:70-136`), and `PrincipalName.Equal` did — so a
+  client naming `krbtgt` as NT-SRV-HST rather than NT-SRV-INST was refused a
+  ticket upstream would have issued.
+- **The comparison now renders a raw DER field's context tag**, not only its
+  length, because of where those addresses go: a KDC-REQ-BODY's addresses are
+  `[9]` and an EncKDCRepPart's caddr is `[11]`, the bytes inside are
+  identical, and a decoder meeting an unexpected tag treats it as the end of
+  the sequence rather than complaining. Carrying the request's field across
+  unchanged would have cost the client its addresses *and* the encrypted
+  padata after them, with nothing saying so.
 - **Every golden case asserts the exchange *succeeded*.** Two KDCs that both
   answer `KRB5KDC_ERR_C_PRINCIPAL_UNKNOWN` agree perfectly while testing
   nothing, so `decodeReply` refuses a KRB-ERROR outright and

@@ -33,6 +33,12 @@ type tgsState struct {
 	replyEType crypto.EncType
 	replyUsage crypto.Usage
 
+	// stkt is the request's second ticket, decrypted, and stktSrv
+	// the principal it names. Both are nil unless the options
+	// asked for user-to-user.
+	stkt    *wire.EncTicketPart
+	stktSrv wire.PrincipalName
+
 	server      *store.Principal
 	serverKey   []byte
 	serverKVNO  int32
@@ -70,13 +76,15 @@ func (k *KDC) TGS(
 	if code, status := k.tgsServer(s); code != 0 {
 		return nil, k.krbError(code, status, &cname)
 	}
+	if code, status := k.readSecondTicket(s); code != 0 {
+		return nil, k.krbError(code, status, &cname)
+	}
 	if code, status := k.tgsPolicy(s); code != 0 {
 		return nil, k.krbError(code, status, &cname)
 	}
 	k.tgsTimes(s)
-	if err := k.tgsSessionKey(s); err != nil {
-		return nil, k.krbError(wire.ErrCodeGeneric,
-			"MAKE_SESSION_KEY", &cname)
+	if code, status := k.tgsSessionKey(s); code != 0 {
+		return nil, k.krbError(code, status, &cname)
 	}
 	rep, err := k.tgsAssemble(s)
 	if err != nil {
@@ -312,16 +320,35 @@ func (k *KDC) tgsServer(s *tgsState) (int32, string) {
 	return 0, ""
 }
 
-// tgsPolicy runs the three policy gates in upstream's order.
+// tgsPolicy runs the policy gates in upstream's order.
+//
+// The order is itself behaviour: a request that fails more than one
+// gate gets the error of the first, and that error is what a client
+// acts on. check_tgs_constraints runs the option checks, then the
+// times, then the server-name checks, then user-to-user
+// (tgs_policy.c:682-714); check_tgs_policy's service checks come
+// after all of them (:746).
 func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 	opts := s.req.Body.Options
-	if opts&wire.ASInvalidOptions == wire.OptEncTktInSKey {
-		return wire.ErrCodeBadOption, "USER2USER UNSUPPORTED"
+	// S4U2Proxy is not implemented and is refused rather than
+	// ignored: cname-in-addl-tkt means the request is asking for
+	// a ticket on another principal's behalf, and answering it as
+	// an ordinary request would issue a ticket for the wrong
+	// client.
+	if opts&wire.OptCNameInAddlTkt != 0 {
+		return wire.ErrCodeBadOption, "S4U2PROXY UNSUPPORTED"
 	}
 	if code, status := checkTGSOpts(opts, s.header); code != 0 {
 		return code, status
 	}
-	if code, status := k.checkReissue(s); code != 0 {
+	if code, status := checkTGSTimes(
+		opts, s.header, s.now); code != 0 {
+		return code, status
+	}
+	if code, status := k.checkHeaderServer(s); code != 0 {
+		return code, status
+	}
+	if code, status := k.checkU2U(s); code != 0 {
 		return code, status
 	}
 	code, status := checkTGSService(
@@ -329,38 +356,81 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 	if code != 0 {
 		return code, status
 	}
-	if code, status := checkTGSTimes(
-		opts, s.header, s.now); code != 0 {
-		return code, status
-	}
 	return k.checkTransited(s)
 }
 
-// checkReissue guards the two options that reissue the presented
-// ticket rather than deriving a new one.
-//
-// Upstream names the issued ticket after the *header* ticket's server
-// (do_tgs_req.c:1012-1016) while sealing it with the key of the
-// server the *request* asked for, and nothing checks that the two
-// agree. A mismatched request therefore gets a ticket whose name and
-// key belong to different principals -- undecryptable by the
-// principal it names, and refused with BAD_INTEGRITY by whoever
-// receives it.
-//
-// This refuses the mismatch instead, with the error whose name is
-// exactly this condition: KDC_ERR_SERVER_NOMATCH, "Requested server
-// and ticket don't match". It is a deliberate divergence, recorded in
-// BOOTSTRAP.md §3.3, on the grounds that issuing an unusable ticket
-// is not behaviour worth preserving and a client that asks for one is
-// already broken. The normal case -- where a client renews the ticket
-// it holds -- is unaffected.
-func (k *KDC) checkReissue(s *tgsState) (int32, string) {
-	opts := s.req.Body.Options
-	if opts&(wire.OptValidate|wire.OptRenew) == 0 {
-		return 0, ""
+// nonTGTOptions are the options under which the presented ticket's
+// server may be something other than a ticket-granting service
+// (NON_TGT_OPTION, kdc/kdc_util.h:455-456).
+const nonTGTOptions = wire.OptForwarded | wire.OptProxy |
+	wire.OptRenew | wire.OptValidate
+
+// checkHeaderServer checks the presented ticket's server against the
+// request's, which upstream does one of two ways depending on the
+// options (tgs_policy.c:692-695).
+func (k *KDC) checkHeaderServer(s *tgsState) (int32, string) {
+	if s.req.Body.Options&nonTGTOptions != 0 {
+		return k.checkNonTGT(s)
 	}
+	return k.checkTGT(s)
+}
+
+// checkTGT is check_tgs_tgt (tgs_policy.c:653-665): an ordinary
+// request must present a ticket-granting ticket.
+//
+// Without it any service ticket would do -- one the client obtained
+// earlier for some unrelated service -- and the KDC would derive a
+// ticket to somewhere else from it. The error is
+// KRB5KRB_AP_ERR_NOT_US rather than a policy refusal, because the
+// complaint is that the ticket was not addressed to this KDC at all.
+func (k *KDC) checkTGT(s *tgsState) (int32, string) {
+	if !isTGSName(s.headerSrv) {
+		return wire.ErrCodeNotUs, "BAD TGS SERVER NAME"
+	}
+	// The krbtgt's instance names the realm it grants tickets
+	// for, which has to be the realm the request asks about.
+	if s.headerSrv.Components[1] != s.req.Body.Realm {
+		return wire.ErrCodeNotUs, "BAD TGS SERVER INSTANCE"
+	}
+	return 0, ""
+}
+
+// checkNonTGT is check_tgs_nontgt (tgs_policy.c:632-647): the four
+// options under which the presented ticket is not a TGT.
+//
+// All four hand back the ticket presented -- renewed, validated, or
+// re-addressed -- so the request has to name the same server it does.
+// Upstream applies this to forwarded and proxied requests as well as
+// to renewal and validation (NON_TGT_OPTION, kdc_util.h:455-456), and
+// this implementation at first applied it only to the latter two. The
+// differential harness found that the moment forwarding was put to
+// both KDCs: the C refused with SERVER_NOMATCH and the Go side issued
+// a ticket.
+//
+// Upstream itself does not make the equivalent check for renewal and
+// validation, where it names the issued ticket after the *header*
+// ticket's server (do_tgs_req.c:1012-1016) while sealing it with the
+// key of the server the *request* asked for. A mismatched request
+// therefore gets a ticket whose name and key belong to different
+// principals -- undecryptable by the principal it names, and refused
+// with BAD_INTEGRITY by whoever receives it. This refuses the
+// mismatch instead, with the error whose name is exactly this
+// condition: KDC_ERR_SERVER_NOMATCH, "Requested server and ticket
+// don't match". That divergence is recorded in BOOTSTRAP.md §3.3, on
+// the grounds that issuing an unusable ticket is not behaviour worth
+// preserving. The normal case -- a client renewing the ticket it
+// holds -- is unaffected.
+func (k *KDC) checkNonTGT(s *tgsState) (int32, string) {
 	if !s.req.Body.SName.Equal(s.headerSrv) {
 		return wire.ErrCodeServerNoMatch, "SERVER NOMATCH"
+	}
+	// A ticket-granting ticket cannot be proxied. A proxy ticket
+	// is one service's ticket for use from somewhere else, and a
+	// TGT is not a service ticket: proxying one would hand out
+	// the right to obtain tickets, not the right to use one.
+	if s.req.Body.Options&wire.OptProxy != 0 &&
+		isTGSName(*s.req.Body.SName) {
+		return wire.ErrCodeBadOption, "CAN'T PROXY TGT"
 	}
 	return 0, ""
 }
@@ -535,17 +605,33 @@ func (k *KDC) tgsRenewTime(s *tgsState) uint32 {
 // soon as a realm holds more than one enctype. Reading it from the
 // server's key was this implementation's bug until the aes-sha2
 // family arrived and the differential harness caught it.
-func (k *KDC) tgsSessionKey(s *tgsState) error {
+func (k *KDC) tgsSessionKey(s *tgsState) (int32, string) {
+	// User-to-user overrides the ordinary selection, for the
+	// reason u2uSessionEType gives.
+	e, code, status := u2uSessionEType(s)
+	if code != 0 {
+		return code, status
+	}
+	if e != 0 {
+		key, err := randomKey(e)
+		if err != nil {
+			return wire.ErrCodeGeneric, "MAKE_SESSION_KEY"
+		}
+		s.session = wire.EncryptionKey{
+			KeyType: int32(e), KeyValue: key,
+		}
+		return 0, ""
+	}
 	key, e, err := k.makeSessionKey(
 		s.req.Body.EType, s.server, s.serverEType)
 	if err != nil {
-		return err
+		return wire.ErrCodeGeneric, "MAKE_SESSION_KEY"
 	}
 	s.session = wire.EncryptionKey{
 		KeyType:  int32(e),
 		KeyValue: key,
 	}
-	return nil
+	return 0, ""
 }
 
 func (k *KDC) skew() time.Duration {

@@ -38,12 +38,12 @@ func (k *KDC) tgsTicket(s *tgsState) (*wire.Ticket, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := crypto.Profile(s.serverEType)
+	key, etype, kvno := s.sealingKey()
+	p, err := crypto.Profile(etype)
 	if err != nil {
 		return nil, err
 	}
-	ct, err := p.Encrypt(s.serverKey, plain,
-		crypto.UsageKDCRepTicket)
+	ct, err := p.Encrypt(key, plain, crypto.UsageKDCRepTicket)
 	if err != nil {
 		return nil, err
 	}
@@ -51,11 +51,24 @@ func (k *KDC) tgsTicket(s *tgsState) (*wire.Ticket, error) {
 		Realm: k.Realm,
 		SName: s.issuedFor(),
 		EncPart: wire.EncryptedData{
-			EType:  int32(s.serverEType),
-			KVNO:   s.serverKVNO,
+			EType:  int32(etype),
+			KVNO:   kvno,
 			Cipher: ct,
 		},
 	}, nil
+}
+
+// sealingKey is the key the new ticket is sealed with, and the
+// enctype and key version that name it on the wire
+// (do_tgs_req.c:996-1010,1056-1061).
+//
+// Ordinarily that is the service's first current long-term key.
+// User-to-user replaces it entirely, for the reason u2u.go gives.
+func (s *tgsState) sealingKey() ([]byte, crypto.EncType, int32) {
+	if s.stkt != nil {
+		return u2uSealingKey(s)
+	}
+	return s.serverKey, s.serverEType, s.serverKVNO
 }
 
 // encTicketPart is what goes inside the new ticket.
@@ -76,10 +89,10 @@ func (s *tgsState) encTicketPart() wire.EncTicketPart {
 		// forward, and inventing one would quietly discard
 		// it.
 		Transited: s.header.Transited,
-		// The addresses come from the presented ticket too,
-		// and pass through as opaque DER because nothing here
-		// reads them.
-		CAddr:     s.header.CAddr,
+		// The addresses pass through as opaque DER because
+		// nothing here reads them; which ticket's they are is
+		// ticketAddresses' business.
+		CAddr:     ticketAddresses(s),
 		AuthTime:  unstamp(s.authTime),
 		StartTime: optStamp(s.start),
 		EndTime:   unstamp(s.end),
@@ -90,7 +103,7 @@ func (s *tgsState) encTicketPart() wire.EncTicketPart {
 // issuedFor is the server the new ticket names.
 //
 // For a renewal or a validation it is the presented ticket's server;
-// checkReissue has already refused the case where that disagrees with
+// checkNonTGT has already refused the case where that disagrees with
 // the request, so the two are the same name by the time this runs and
 // the distinction is documentation rather than logic.
 func (s *tgsState) issuedFor() wire.PrincipalName {
@@ -124,6 +137,7 @@ func (k *KDC) tgsEncPart(s *tgsState) (*wire.EncryptedData, error) {
 		RenewTill: optStamp(s.renew),
 		SRealm:    k.Realm,
 		SName:     s.issuedFor(),
+		CAddr:     replyAddresses(s),
 	})
 	if err != nil {
 		return nil, err

@@ -201,3 +201,66 @@ func tlvLength(b []byte) (n, hdr int, err error) {
 	}
 	return n, hdr, nil
 }
+
+// Tickets decodes a request body's additional-tickets field.
+//
+// The field is a SEQUENCE OF Ticket at [11], and until user-to-user
+// needed it this package carried it as opaque DER. It stays opaque on
+// the way *through* -- a body decoded and re-encoded keeps the bytes
+// it arrived with, which is what the authenticator's checksum depends
+// on -- and this reads it without disturbing that.
+//
+// An absent field is no tickets and no error: it is OPTIONAL, and a
+// request that does not use it is not malformed.
+func (b *KDCReqBody) Tickets() ([]Ticket, error) {
+	if b.AdditionalTickets.FullBytes == nil {
+		return nil, nil
+	}
+	var raw []asn1.RawValue
+	rest, err := asn1.Unmarshal(
+		ctxUnwrap(b.AdditionalTickets), &raw)
+	if err != nil {
+		return nil, derErr("additional-tickets", err)
+	}
+	if len(rest) != 0 {
+		return nil, fmt.Errorf(
+			"%w: %d octets after additional-tickets",
+			ErrMalformed, len(rest))
+	}
+	out := make([]Ticket, 0, len(raw))
+	for _, r := range raw {
+		t, err := UnmarshalTicket(r.FullBytes)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// SetTickets encodes an additional-tickets field.
+//
+// It exists so a client can be written -- a user-to-user request has
+// to put the second ticket somewhere -- and it builds the context
+// wrapper itself for the reason ctxWrap documents: encoding/asn1
+// ignores explicit,tag:N on an asn1.RawValue when it marshals one.
+func (b *KDCReqBody) SetTickets(ts []Ticket) error {
+	if len(ts) == 0 {
+		b.AdditionalTickets = asn1.RawValue{}
+		return nil
+	}
+	raw := make([]asn1.RawValue, len(ts))
+	for i, t := range ts {
+		der, err := MarshalTicket(t)
+		if err != nil {
+			return err
+		}
+		raw[i] = asn1.RawValue{FullBytes: der}
+	}
+	seq, err := asn1.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	b.AdditionalTickets = ctxWrap(11, seq)
+	return nil
+}

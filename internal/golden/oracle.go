@@ -47,6 +47,15 @@ const (
 	// from a password is one it can compute.
 	ServicePassword = "servicepassword"
 
+	// PeerName is the user-to-user peer: a principal with
+	// DISALLOW_SVR set, so an ordinary TGS-REQ naming it is
+	// refused and only a user-to-user request can reach it. That
+	// is what the mechanism is for -- a user has a password and
+	// no keytab, so there is no long-term key to seal a ticket
+	// with.
+	PeerName     = "peer"
+	PeerPassword = "peerpassword"
+
 	// PreauthName demands pre-authentication; UserName does not.
 	// Keeping both means the padata-free single round trip and
 	// the PA-ENC-TIMESTAMP path can be exercised separately.

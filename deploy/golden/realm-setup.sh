@@ -16,6 +16,8 @@ set -eu
 : "${KRB5_TGT_PASSWORD:?}"
 : "${KRB5_SERVICE:?}"
 : "${KRB5_SERVICE_PASSWORD:?}"
+: "${KRB5_PEER:?}"
+: "${KRB5_PEER_PASSWORD:?}"
 : "${KRB5_KDC_PORT:?}"
 : "${KRB5_TESTDIR:?}"
 
@@ -148,6 +150,18 @@ kadmin.local -q "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
 # requiring it here would only test the refusal path.
 kadmin.local -q "addprinc -pw $KRB5_SERVICE_PASSWORD -kvno 1 \
 	$KRB5_SERVICE@$KRB5_REALM" >/dev/null
+
+# A user-to-user peer: someone with a password and no keytab, which is
+# the whole reason the mechanism exists. -allow_svr sets DISALLOW_SVR,
+# so an ordinary TGS-REQ naming this principal is refused with
+# KRB5KDC_ERR_MUST_USE_USER2USER and only a request carrying this
+# principal's own TGT as its second ticket can reach it
+# (check_tgs_svc_deny_all, kdc/tgs_policy.c:152-156).
+#
+# The password is fixed like every other, so the harness can derive the
+# key and obtain a TGT for this principal the way its owner would.
+kadmin.local -q "addprinc -pw $KRB5_PEER_PASSWORD -kvno 1 \
+	-allow_svr $KRB5_PEER@$KRB5_REALM" >/dev/null
 
 # The krbtgt key kdb5_util create writes is a *random* key
 # (tgt_keysalt_iterate, kadmin/dbutil/kdb5_create.c:441-460) -- seeded

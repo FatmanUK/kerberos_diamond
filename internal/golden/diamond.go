@@ -117,7 +117,7 @@ func (d *Diamond) open(
 	return provision(ctx, s, mkey)
 }
 
-// provision creates the oracle's three principals with the same keys.
+// provision creates the oracle's principals with the same keys.
 //
 // krbtgt is written at TgtKVNO because the C side's cpw bumped it
 // there; a kvno mismatch would show up in the ticket's enc-part and
@@ -141,6 +141,8 @@ func provision(
 		{[]string{"krbtgt", Realm}, TgtPassword,
 			TgtKVNO, 0},
 		{ServiceName, ServicePassword, 1, 0},
+		{[]string{PeerName}, PeerPassword, 1,
+			store.AttrDisallowSvr},
 	} {
 		p := store.NewPrincipal(Realm, e.components)
 		p.Attributes = e.attrs

@@ -36,10 +36,25 @@ func (p PrincipalName) String() string {
 	return out
 }
 
-// Equal compares two names, type included.
+// Equal compares two names by their components, ignoring the name
+// type. That is krb5_principal_compare_flags
+// (lib/krb5/krb/princ_comp.c:70-136), which compares the realm and
+// then the components and never looks at the type at all.
+//
+// Ignoring it is not laxity. The type is a hint about how a name was
+// spelled -- NT-SRV-INST, NT-SRV-HST, NT-PRINCIPAL -- and the same
+// principal arrives under different ones from different clients, so
+// comparing it would refuse a request that named exactly the right
+// principal. This implementation compared the type at first, and a
+// forwarded request naming krbtgt as NT-SRV-HST was refused with
+// SERVER_NOMATCH where upstream issued the ticket.
+//
+// The realm is not compared here because a PrincipalName does not
+// carry one: a KDC-REQ-BODY has a single realm for both of its
+// principals (asn1_k_encode.c:443-545), so a caller holding two names
+// from one message has already established they share it.
 func (p PrincipalName) Equal(q PrincipalName) bool {
-	if p.Type != q.Type ||
-		len(p.Components) != len(q.Components) {
+	if len(p.Components) != len(q.Components) {
 		return false
 	}
 	for i := range p.Components {

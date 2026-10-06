@@ -281,3 +281,20 @@ func (e EncKDCRepPart) EffectiveStartTime() time.Time {
 	}
 	return e.StartTime
 }
+
+// ReplyAddresses re-tags a KDC-REQ-BODY addresses field so it can be
+// carried as an EncKDCRepPart's caddr.
+//
+// The two fields hold the same HostAddresses, but the context tag
+// differs: [9] in the request body (asn1_k_encode.c:521) and [11] in
+// the reply's sealed half (:349). Copying the decoded RawValue across
+// unchanged would put a [9] where a C client expects [11], and
+// because the decoder treats trailing tags it does not recognise as
+// the end of the sequence, the client would not complain -- it would
+// silently see no addresses and no encrypted padata either.
+func ReplyAddresses(a asn1.RawValue) asn1.RawValue {
+	if a.FullBytes == nil && a.Bytes == nil {
+		return asn1.RawValue{}
+	}
+	return ctxWrap(11, a.Bytes)
+}

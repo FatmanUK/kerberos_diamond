@@ -276,3 +276,100 @@ func TestReqBodyBytesRejectsRubbish(t *testing.T) {
 		})
 	}
 }
+
+// The reference AS-REQ carries two additional tickets, so decoding
+// them is checked against upstream's own bytes rather than against
+// this package's encoder.
+func TestAdditionalTicketsDecode(t *testing.T) {
+	r, err := UnmarshalASReq(ref(t, refASReq))
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	ts, err := r.Body.Tickets()
+	if err != nil {
+		t.Fatalf("Tickets: %v", err)
+	}
+	if len(ts) != 2 {
+		t.Fatalf("got %d tickets, want 2", len(ts))
+	}
+	for i, tkt := range ts {
+		if tkt.Realm != "ATHENA.MIT.EDU" {
+			t.Errorf("ticket %d realm %q", i, tkt.Realm)
+		}
+		if got := tkt.SName.String(); got != "hftsai/extra" {
+			t.Errorf("ticket %d sname is %q", i, got)
+		}
+	}
+}
+
+// An absent field is no tickets and no error.
+func TestNoAdditionalTickets(t *testing.T) {
+	r, err := UnmarshalASReq(ref(t, refASReqOnlySrv))
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	ts, err := r.Body.Tickets()
+	if err != nil {
+		t.Fatalf("Tickets: %v", err)
+	}
+	if len(ts) != 0 {
+		t.Errorf("got %d tickets from a body with none",
+			len(ts))
+	}
+}
+
+// Setting the field and reading it back has to round-trip, because a
+// user-to-user client builds it and the KDC reads it.
+func TestSetTicketsRoundTrips(t *testing.T) {
+	want, err := UnmarshalTicket(ref(t, refTicket))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b KDCReqBody
+	if err := b.SetTickets([]Ticket{want}); err != nil {
+		t.Fatalf("SetTickets: %v", err)
+	}
+	// The wrapper has to be the context tag, because
+	// encoding/asn1 will not add one to a RawValue.
+	if b.AdditionalTickets.FullBytes[0] != 0xAB {
+		t.Errorf("wrapper is %02X, want AB",
+			b.AdditionalTickets.FullBytes[0])
+	}
+	got, err := b.Tickets()
+	if err != nil {
+		t.Fatalf("Tickets: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d tickets", len(got))
+	}
+	if got[0].Realm != want.Realm ||
+		!got[0].SName.Equal(want.SName) {
+		t.Errorf("round trip changed the ticket")
+	}
+	// And clearing it must leave the field absent, not an empty
+	// SEQUENCE, so an optional field stays optional.
+	if err := b.SetTickets(nil); err != nil {
+		t.Fatal(err)
+	}
+	if b.AdditionalTickets.FullBytes != nil {
+		t.Error("clearing left bytes behind")
+	}
+}
+
+// A body that arrived with additional tickets must re-encode to the
+// same octets, because the authenticator's checksum covers them.
+func TestAdditionalTicketsSurviveARoundTrip(t *testing.T) {
+	want := ref(t, refTGSReq)
+	r, err := UnmarshalTGSReq(want)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, err := r.Body.Tickets(); err != nil {
+		t.Fatalf("Tickets: %v", err)
+	}
+	got, err := MarshalTGSReq(r)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	roundTrip(t, want, got)
+}

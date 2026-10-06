@@ -1,6 +1,7 @@
 package golden
 
 import (
+	"encoding/asn1"
 	"fmt"
 	"sort"
 	"strings"
@@ -214,9 +215,8 @@ func normalizeTicket(f *Fields, x Exchange, realm string) {
 	f.set("tkt.starttime", offset(x.Tkt.StartTime, base))
 	f.set("tkt.endtime", offset(x.Tkt.EndTime, base))
 	f.set("tkt.renew-till", offset(x.Tkt.RenewTill, base))
-	f.set("tkt.caddr", rawPresence(len(x.Tkt.CAddr.FullBytes)))
-	f.set("tkt.authz-data",
-		rawPresence(len(x.Tkt.AuthorizationData.FullBytes)))
+	f.set("tkt.caddr", rawField(x.Tkt.CAddr))
+	f.set("tkt.authz-data", rawField(x.Tkt.AuthorizationData))
 }
 
 func normalizeEnc(
@@ -237,7 +237,7 @@ func normalizeEnc(
 	f.set("enc.renew-till", offset(e.RenewTill, base))
 	f.set("enc.srealm", scrub(e.SRealm, realm))
 	f.set("enc.sname", scrubName(e.SName, realm))
-	f.set("enc.caddr", rawPresence(len(e.CAddr.FullBytes)))
+	f.set("enc.caddr", rawField(e.CAddr))
 	f.set("enc.enc-padata", padataSummary(e.EncPAData))
 }
 
@@ -293,11 +293,22 @@ func padataSummary(ps []wire.PAData) string {
 	return strings.Join(parts, " ")
 }
 
-func rawPresence(n int) string {
-	if n == 0 {
+// rawField renders a field this harness carries as opaque DER.
+//
+// The context tag is part of the rendering and not only the length,
+// because the same bytes under the wrong tag is a real failure mode
+// here and a silent one: the request body's addresses are [9] and an
+// EncKDCRepPart's are [11], the two are otherwise identical, and a
+// decoder that meets an unexpected tag treats it as the end of the
+// sequence rather than complaining (k5_asn1_decode_sequence,
+// lib/krb5/asn.1/asn1_encode.c). A client would then see no addresses
+// and no encrypted padata either, and say nothing.
+func rawField(v asn1.RawValue) string {
+	if len(v.FullBytes) == 0 {
 		return absent
 	}
-	return fmt.Sprintf("<der:len=%d>", n)
+	return fmt.Sprintf("<der:[%d],len=%d>",
+		v.Tag, len(v.FullBytes))
 }
 
 // scrub replaces the realm with a placeholder, so that a harness run

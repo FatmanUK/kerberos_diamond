@@ -210,17 +210,27 @@ func optCtxGstringValue(r asn1.RawValue) (string, bool, error) {
 // Context tag numbers in these messages are all well below 31, so the
 // identifier octet is always a single byte; a larger one would need
 // multi-byte form and is a programming error here rather than
-// something to encode.
+// something to encode. Both Bytes and FullBytes are filled in, so
+// that a RawValue built here is indistinguishable from one
+// encoding/asn1 decoded. Setting only FullBytes would marshal
+// correctly -- makeField returns those bytes untouched -- and then
+// read back as empty through ctxUnwrap, which is how user-to-user's
+// second ticket went missing the first time.
 func ctxWrap(tag int, body []byte) asn1.RawValue {
 	if tag < 0 || tag > 30 {
 		panic("wire: context tag out of range")
 	}
 	id := byte(0xA0 | tag)
-	return asn1.RawValue{FullBytes: derTLV(id, body)}
+	return asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tag,
+		IsCompound: true,
+		Bytes:      body,
+		FullBytes:  derTLV(id, body),
+	}
 }
 
-// ctxUnwrap returns the element inside a context tag, which is what a
-// decoded asn1.RawValue carries in Bytes.
+// ctxUnwrap returns the element inside a context tag.
 func ctxUnwrap(r asn1.RawValue) []byte { return r.Bytes }
 
 // derTLV builds one DER tag-length-value.
