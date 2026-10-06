@@ -171,13 +171,24 @@ func provisionTrust(
 	s *store.Store,
 	mkey store.MasterKey,
 ) error {
-	p := store.NewPrincipal(ForeignRealm,
-		[]string{"krbtgt", Realm})
-	if err := p.SetPassword(
-		mkey, InterRealmPassword, 1); err != nil {
-		return err
+	for realm, password := range map[string]string{
+		// A direct trust, for the one-hop case.
+		ForeignRealm: InterRealmPassword,
+		// The last hop of a three-realm path, which is the
+		// only part of that path this realm is in.
+		MidRealm: MidLocalPassword,
+	} {
+		p := store.NewPrincipal(realm,
+			[]string{"krbtgt", Realm})
+		err := p.SetPassword(mkey, password, 1)
+		if err != nil {
+			return err
+		}
+		if err := s.Save(ctx, p); err != nil {
+			return err
+		}
 	}
-	return s.Save(ctx, p)
+	return nil
 }
 
 // storeName is the database key for a principal in this realm, which

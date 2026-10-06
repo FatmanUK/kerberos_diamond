@@ -7,6 +7,7 @@ import (
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/kerberos_diamond/internal/transit"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
 
@@ -49,9 +50,12 @@ type tgsState struct {
 	serverKVNO  int32
 	serverEType crypto.EncType
 
-	// transitChecked records that the presented ticket's
-	// transited path was evaluated and accepted, which becomes
-	// TKT_FLG_TRANSIT_POLICY_CHECKED on the issued ticket.
+	// transited is the path the issued ticket will carry, which
+	// is the presented ticket's unless this request added a realm
+	// to it. transitChecked records that the path was evaluated
+	// and accepted, which becomes TKT_FLG_TRANSIT_POLICY_CHECKED
+	// on the issued ticket.
+	transited      wire.TransitedEncoding
 	transitChecked bool
 
 	session wire.EncryptionKey
@@ -82,6 +86,9 @@ func (k *KDC) TGS(
 		return nil, k.krbError(code, status, &cname)
 	}
 	if code, status := k.readSecondTicket(s); code != 0 {
+		return nil, k.krbError(code, status, &cname)
+	}
+	if code, status := k.buildTransited(s); code != 0 {
 		return nil, k.krbError(code, status, &cname)
 	}
 	if code, status := k.tgsPolicy(s); code != 0 {
@@ -452,35 +459,33 @@ func (k *KDC) checkNonTGT(s *tgsState) (int32, string) {
 	return 0, ""
 }
 
-// checkTransited evaluates the presented ticket's transited path and
-// decides whether the issued ticket may claim the path was checked.
+// checkTransited evaluates the path the issued ticket will carry and
+// decides whether it may claim the path was checked
+// (do_tgs_req.c:924-948).
 //
-// Upstream runs kdc_check_transited_list unless the request asks it
-// not to, sets TKT_FLG_TRANSIT_POLICY_CHECKED when it passes, and --
-// with reject_bad_transit, which defaults to *true*
-// (kdc/main.c:305-309) -- refuses the request outright when it does
-// not (do_tgs_req.c:924-947).
+// Two things happen here and upstream keeps them apart on purpose.
+// The check itself only *sets a flag*: a path it cannot verify is
+// logged and the request continues. What refuses the request is the
+// separate reject_bad_transit test afterwards, which defaults to true
+// (kdc/main.c:305-309) -- so the refusal is policy and the check is
+// evidence, and a deployment that turned the policy off would still
+// have tickets that said truthfully whether anyone had looked.
 //
-// This implementation can evaluate only the empty path. An empty
-// transited list means the ticket never left this realm, which is
-// trivially acceptable. A non-empty one is cross-realm, which is not
-// implemented, so it is refused rather than waved through: setting
-// the flag on a path nothing examined would be a lie a service relies
-// on.
+// The error is KDC_ERR_POLICY, which is what that test answers and
+// not the PATH_NOT_ACCEPTED the name of the condition suggests.
+//
+// KDC_OPT_DISABLE_TRANSITED_CHECK therefore refuses the request under
+// the default policy rather than waving it through: skipping the
+// check leaves the flag clear, and a clear flag is a refusal.
 func (k *KDC) checkTransited(s *tgsState) (int32, string) {
-	if code, status := k.checkCrossTransit(s); code != 0 {
-		return code, status
+	if s.req.Body.Options&wire.OptDisableTransitedCheck == 0 {
+		err := transit.Check(string(s.transited.Contents),
+			s.header.CRealm, s.req.Body.Realm)
+		s.transitChecked = err == nil
 	}
-	if s.req.Body.Options&wire.OptDisableTransitedCheck != 0 {
-		// The flag stays clear, and with reject_bad_transit's
-		// default that is a refusal -- which is what upstream
-		// does too when asked to skip the check.
+	if !s.transitChecked {
 		return wire.ErrCodePolicy, "BAD_TRANSIT"
 	}
-	if len(s.header.Transited.Contents) != 0 {
-		return wire.ErrCodePathNotAccepted, "BAD_TRANSIT"
-	}
-	s.transitChecked = true
 	return 0, ""
 }
 

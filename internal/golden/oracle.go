@@ -74,6 +74,21 @@ const (
 	// same on both sides, so one password gives one key.
 	InterRealmPassword = "interrealmpassword"
 
+	// MidRealm and FarRealm are the other two realms the oracle
+	// serves, arranged as a hierarchy below Realm so that a path
+	// through three of them exists without a [capaths] entry: the
+	// hierarchical walk is a convention about names, and it is
+	// the only path resolution either side implements.
+	//
+	// MidLocalPassword is the trust between MidRealm and Realm,
+	// and it is the one the Go side needs -- the far end's trust
+	// is between two realms only the C serves.
+	MidRealm         = "OTHER." + Realm
+	FarRealm         = "SUB." + MidRealm
+	FarUser          = "far"
+	FarPassword      = "farpassword"
+	MidLocalPassword = "midlocalpassword"
+
 	// OraclePort is the port the C KDC listens on *inside* the
 	// container, which is fixed by the image. A process in the
 	// container reaches it at 127.0.0.1:OraclePort; the host

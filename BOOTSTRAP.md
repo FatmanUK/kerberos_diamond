@@ -55,6 +55,15 @@ that have aged worst in the C:
   presents *one* TGT to both implementations in the same encoded TGS-REQ —
   they share the fixture's krbtgt key, so the same ticket is valid at either —
   and compares the two replies field for field with both halves decrypted.
+- **A path through a middle realm is recorded and checked.**
+  `internal/transit` is the transited field: `Add` compresses a realm into
+  the encoding and `Check` expands it back and refuses any realm off the
+  path. The expansion is anchored to upstream's own published vectors --
+  `lib/krb5/krb/transit-tests` driving `t_expand`, nine cases -- which is the
+  only anchor that exists for any of it, and all nine passed first time. The
+  oracle now serves *four* realms so the harness can drive a three-realm
+  path: an unmodified `kvno` two realms away gets a ticket from the Go KDC,
+  and the field the Go KDC wrote is compared with the C's octet for octet.
 - **Cross-realm works between two realms that trust each other directly**,
   and a stock `kvno` proves it: an unmodified client authenticates to the C
   KDC's second realm, fetches a cross-realm TGT there, and spends it at the
@@ -123,13 +132,14 @@ Everything the plan file listed is done, so this list is now the live one.
 
 1. ~~**The TGS cases nothing issues yet**~~ — forwarding, proxying and
    user-to-user. Done, and they found three divergences between them; see §6.
-2. **Cross-realm's transited path**, for a route through three realms or
-   more. A direct trust between two realms works and is covered both ways;
-   what is missing is `add_to_transited` (`kdc/kdc_transit.c:144`) and
-   `krb5_check_transited_list` (`lib/krb5/krb/chk_trans.c:437`), without which
-   a longer path is refused rather than recorded. Upstream ships published
-   expansion vectors for the second of those (`transit-tests` driving
-   `t_expand`), so it can be anchored rather than reasoned about.
+2. **`[capaths]` and the alternate-TGS search**, which are what is left of
+   cross-realm. Paths the realm-naming hierarchy describes work, including
+   through a middle realm; a path between two realms with no hierarchical
+   relationship needs configuration (`rtree_capath_vals`,
+   `lib/krb5/krb/walk_rtree.c:124`), and a client that asks for a trust this
+   realm does not hold needs `find_alternate_tgs` (`do_tgs_req.c:371`) to be
+   handed an intermediate rather than a refusal. `internal/transit` already
+   has the hierarchy half of both.
 3. **FAST** (RFC 6113), which would also let the KDC stop declining to
    advertise it — currently the harness's one declared exemption.
 4. **A `kadmin` protocol**, for provisioning from off-host. The `kdiamond`
@@ -167,12 +177,13 @@ Everything the plan file listed is done, so this list is now the live one.
 
 ### 3.2 Architecture
 
-The layout exists; all but `internal/config` is still empty.
+The layout is filled in; §1 says what each package does.
 
 - **Packages**: `internal/config` (12-factor env), `internal/store`
   (Postgres/GORM), `internal/wire` (ASN.1/DER), `internal/crypto` (RFC
-  3961/3962), `internal/kdc` (the exchanges), `internal/transport` (the
-  listener), `internal/golden` (the harness).
+  3961/3962 and RFC 8009), `internal/transit` (the transited-realm field),
+  `internal/kdc` (the exchanges), `internal/transport` (the listener),
+  `internal/golden` (the harness).
 - **Binaries**: `cmd/kdiamond`, the KDC daemon, and `cmd/kdiamond-proxy`, the
   client-side KKDCP shim described in §3.3.
 - **Configuration is environment-only.** Every setting is a `KD_`-prefixed
@@ -311,25 +322,33 @@ are not "fixed" back by accident.
   on the issuing side needed writing — the inter-realm principal is an
   ordinary entry in the issuing realm's own database — and what needed
   changing was the assumption that a presented ticket belongs to this realm.
-- **Only an empty transited path is accepted.** Upstream runs
-  `kdc_check_transited_list` and sets `TKT_FLG_TRANSIT_POLICY_CHECKED` when it
-  passes, refusing the request when it does not — `reject_bad_transit`
-  defaults to *true* (`kdc/main.c:305-309`). This implementation can evaluate
-  only the empty path, which means at most one realm boundary was crossed. A
-  non-empty one is refused rather than waved through: setting the flag on a
-  path nothing examined would be a lie a service relies on, and
-  `KDC_OPT_DISABLE_TRANSITED_CHECK` is refused for the same reason. A request
-  that would *need* a new entry written is refused too, for the same reason
-  and with the same code: carrying the list across unchanged would silently
-  drop the third realm from the record.
-- **No `[capaths]`, and no alternate-TGS search.** Upstream resolves a path it
-  has no direct trust for by walking the realm hierarchy or a configured
-  `[capaths]` (`krb5_walk_realm_tree`, `lib/krb5/krb/walk_rtree.c:93`), and
-  `find_alternate_tgs` (`do_tgs_req.c:371`) hands back an intermediate realm's
-  TGT when the one asked for is unknown. Both belong with the transited work
-  and neither is written: a request for a trust this realm does not hold gets
-  `S_PRINCIPAL_UNKNOWN`, which is what upstream answers when its own search
-  comes up empty.
+- **The transited path is written and checked, and the check only sets a
+  flag.** Upstream keeps those two apart on purpose: a path it cannot verify
+  is logged and the request continues, and what refuses the request is the
+  separate `reject_bad_transit` test afterwards, which defaults to *true*
+  (`kdc/main.c:305-309`). So the refusal is policy and the flag is evidence,
+  and a deployment that turned the policy off would still issue tickets that
+  said truthfully whether anyone had looked. The error is `KDC_ERR_POLICY`,
+  which is what that test answers — not the `PATH_NOT_ACCEPTED` the name of
+  the condition suggests. `KDC_OPT_DISABLE_TRANSITED_CHECK` therefore refuses
+  the request under the default policy rather than waving it through: skipping
+  the check leaves the flag clear, and a clear flag is a refusal.
+- **Only paths the realm hierarchy describes are accepted, because there is no
+  `[capaths]`.** Upstream consults it first and falls back to the hierarchy
+  (`rtree_capath_vals`, `lib/krb5/krb/walk_rtree.c:124`), so a realm pair with
+  no hierarchical relationship can still be given a path by configuration.
+  Without it, `internal/transit` accepts exactly the paths the naming
+  convention describes — and that is a real limitation rather than a
+  safe-by-default one: a legitimate path between two unrelated realms is
+  refused. One boundary is unaffected, because a single hop records nothing
+  and an empty field passes without the path being consulted at all.
+- **No alternate-TGS search.** `find_alternate_tgs` (`do_tgs_req.c:371`) hands
+  a client an intermediate realm's ticket-granting ticket when the trust it
+  asked for is unknown, so a client with no `[capaths]` of its own can still
+  be steered along a path. Without it a request for a trust this realm does
+  not hold gets `S_PRINCIPAL_UNKNOWN`, which is what upstream answers when its
+  own search comes up empty. `internal/transit.Tree` already computes the
+  path this would walk.
 
 **The AS exchange:**
 
@@ -638,6 +657,18 @@ tests. It is green.
   mismatched client name, a stale clock, and a request asking for a flag its
   TGT does not carry. Each asserts the *specific* protocol error, because
   they are different codes and a client acts on them differently.
+- **The transited field** — covered against upstream's own vectors and then
+  differentially. `lib/krb5/krb/transit-tests` is nine published expansion
+  cases, including two that must be *refused*, and the comparison is of
+  sorted lists because the script sorts both sides before comparing. Nothing
+  upstream publishes an expected value for the compressing half —
+  `kdc/rtest.c` prints its answer and asserts nothing, the way `t_cts.c`
+  does — so those cases are derived from reading `kdc_transit.c` and say so;
+  the anchor for that half is the three-realm golden case, where the field
+  the C wrote and the field this wrote are compared directly. The comparison
+  renders the transited *contents* and not only their length, because the
+  compressed encoding can name a different realm in the same number of
+  octets.
 - **Cross-realm** — covered in process, differentially, and with a stock
   `kvno`. The in-process case runs *two* KDCs over one database rather than
   hand-assembling the cross TGT one of them would have issued: a principal's

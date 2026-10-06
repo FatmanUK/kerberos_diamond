@@ -218,17 +218,24 @@ func TestCrossRealmCannotClaimALocalClient(t *testing.T) {
 	}
 }
 
-// A path through a third realm has to be recorded in the transited
-// field, and building that record is not implemented, so it is
-// refused rather than carried across with the third realm silently
-// dropped.
-func TestCrossRealmRefusesAThirdRealm(t *testing.T) {
+// A realm that is not on the hierarchical path between the two ends
+// is refused. This is the whole point of the transited field: a
+// service has to be able to tell a ticket that came through somewhere
+// it trusts from one that did not.
+//
+// The error is KDC_ERR_POLICY, which is what upstream's
+// reject_bad_transit test answers (do_tgs_req.c:941-947) rather than
+// the PATH_NOT_ACCEPTED the name of the condition suggests. The check
+// itself only sets a flag; the refusal is the policy afterwards.
+func TestCrossRealmRefusesARealmOffThePath(t *testing.T) {
 	k := testKDC(t)
 	addService(t, k, 0)
 	foreign := twoRealms(t, k)
 
 	// A client of some third realm, as the foreign KDC would have
-	// recorded it after a hop of its own.
+	// recorded it after a hop of its own. FOREIGN.TEST is then
+	// written into the transited field and is nowhere on the path
+	// between THIRD.TEST and this realm.
 	tgt, session := crossTGT(t, foreign)
 	relayed := reseal(t, k, tgt, func(e *wire.EncTicketPart) {
 		e.CRealm = "THIRD.TEST"
@@ -241,11 +248,10 @@ func TestCrossRealmRefusesAThirdRealm(t *testing.T) {
 		})
 	_, kerr := k.TGS(msg, req)
 	if kerr == nil {
-		t.Fatal("accepted a two-hop path with no transit")
+		t.Fatal("accepted a path through an unrelated realm")
 	}
-	if kerr.ErrorCode != wire.ErrCodePathNotAccepted {
-		t.Errorf("code %d, want PATH_NOT_ACCEPTED",
-			kerr.ErrorCode)
+	if kerr.ErrorCode != wire.ErrCodePolicy {
+		t.Errorf("code %d, want POLICY", kerr.ErrorCode)
 	}
 }
 

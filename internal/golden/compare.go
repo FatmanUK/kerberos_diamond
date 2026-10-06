@@ -209,8 +209,14 @@ func normalizeTicket(f *Fields, x Exchange, realm string) {
 	f.set("tkt.cname", scrubName(x.Tkt.CName, realm))
 	f.set("tkt.transited.type",
 		fmt.Sprintf("%d", x.Tkt.Transited.Type))
-	f.set("tkt.transited.len",
-		fmt.Sprintf("%d", len(x.Tkt.Transited.Contents)))
+	// The contents are compared and not only their length. They
+	// are realm names rather than key material, they are
+	// deterministic, and the compressed encoding can name a
+	// *different* realm in the same number of octets -- so a
+	// length comparison would pass a path that went somewhere
+	// else entirely.
+	f.set("tkt.transited",
+		scrub(string(x.Tkt.Transited.Contents), realm))
 	f.set("tkt.authtime", "base")
 	f.set("tkt.starttime", offset(x.Tkt.StartTime, base))
 	f.set("tkt.endtime", offset(x.Tkt.EndTime, base))

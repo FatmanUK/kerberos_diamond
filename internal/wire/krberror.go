@@ -26,6 +26,7 @@ const (
 	ErrCodeETypeNoSupp        int32 = 14
 	ErrCodeSumTypeNoSupp      int32 = 15
 	ErrCodePADataTypeNoSupp   int32 = 16
+	ErrCodeTrTypeNoSupp       int32 = 17
 	ErrCodeClientRevoked      int32 = 18
 	ErrCodeKeyExpired         int32 = 23
 	ErrCodePreauthFailed      int32 = 24

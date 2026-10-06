@@ -1,12 +1,27 @@
 #!/bin/sh
-# Create the oracle's realm from nothing, then run whatever was asked.
+# Create the oracle's realms from nothing, then run whatever was asked.
 #
-# Everything here is fixed rather than generated: the realm, the
-# passwords, the key version numbers. The master key is *derived* from
-# the realm and the master password -- string_to_key salted with
-# K/M@REALM -- so a fixed password means a reproducible master key and
-# therefore reproducible stored keys. A fixture that randomised any of
-# this could not be diffed against anything.
+# Everything here is fixed rather than generated: the realms, the
+# passwords, the key version numbers. A master key is *derived* from its
+# realm and master password -- string_to_key salted with K/M@REALM -- so
+# a fixed password means a reproducible master key and therefore
+# reproducible stored keys. A fixture that randomised any of this could
+# not be diffed against anything.
+#
+# There are four realms and one krb5kdc serving all of them on one port,
+# which is what -r does. They are:
+#
+#   KDIAMOND.TEST              the realm the Go KDC also serves
+#   FOREIGN.TEST               a direct trust, for the one-hop case
+#   OTHER.KDIAMOND.TEST        the middle of a three-realm path
+#   SUB.OTHER.KDIAMOND.TEST    the far end of that path
+#
+# The last two are named *below* KDIAMOND.TEST deliberately. Without a
+# [capaths] entry a client walks the realm hierarchy, which is a
+# convention about names, so a path through three realms exists only if
+# the names say it does. This implementation has no [capaths] yet, so
+# the fixture has to be a hierarchy for the three-realm case to work at
+# all -- and that limitation is the point of writing it down here.
 set -eu
 
 : "${KRB5_REALM:?}"
@@ -24,6 +39,16 @@ set -eu
 : "${KRB5_REMOTE_PASSWORD:?}"
 : "${KRB5_FOREIGN_TGT_PASSWORD:?}"
 : "${KRB5_INTERREALM_PASSWORD:?}"
+: "${KRB5_MID_REALM:?}"
+: "${KRB5_MID_MASTER_PASSWORD:?}"
+: "${KRB5_MID_TGT_PASSWORD:?}"
+: "${KRB5_MID_LOCAL_PASSWORD:?}"
+: "${KRB5_FAR_REALM:?}"
+: "${KRB5_FAR_MASTER_PASSWORD:?}"
+: "${KRB5_FAR_TGT_PASSWORD:?}"
+: "${KRB5_FAR_USER:?}"
+: "${KRB5_FAR_PASSWORD:?}"
+: "${KRB5_FAR_MID_PASSWORD:?}"
 : "${KRB5_KDC_PORT:?}"
 : "${KRB5_TESTDIR:?}"
 
@@ -45,59 +70,12 @@ export TZ=UTC
 rm -rf "$KRB5_TESTDIR"
 mkdir -p "$KRB5_TESTDIR"
 
-# dns_lookup_kdc, dns_canonicalize_hostname, rdns and qualify_shortname
-# are all off so that no name resolution reaches a transcript.
-#
-# udp_preference_limit = 1 puts TCP first. It is not sufficient on its
-# own -- both protocols are tried if the first attempt fails -- which
-# is why kdc_listen below removes UDP from the server as well.
-cat >"$KRB5_CONFIG" <<EOF
-[libdefaults]
-	default_realm = $KRB5_REALM
-	dns_lookup_kdc = false
-	dns_lookup_realm = false
-	dns_canonicalize_hostname = false
-	rdns = false
-	qualify_shortname = ""
-	udp_preference_limit = 1
-	noaddresses = true
+# The realms, each with the short name used for its database module and
+# stash file. The order is the order they are created in and nothing
+# depends on it.
+REALMS="$KRB5_REALM:db $KRB5_FOREIGN_REALM:fdb \
+$KRB5_MID_REALM:mdb $KRB5_FAR_REALM:sdb"
 
-[realms]
-	$KRB5_REALM = {
-		kdc = 127.0.0.1:$KRB5_KDC_PORT
-	}
-
-	$KRB5_FOREIGN_REALM = {
-		kdc = 127.0.0.1:$KRB5_KDC_PORT
-	}
-
-# The two realms trust each other directly and nothing else, so the
-# path between them is named rather than guessed. Without this a client
-# falls back to the hierarchical walk, which for two realms sharing only
-# the "TEST" suffix would look for krbtgt/TEST and fail.
-[capaths]
-	$KRB5_REALM = {
-		$KRB5_FOREIGN_REALM = .
-	}
-	$KRB5_FOREIGN_REALM = {
-		$KRB5_REALM = .
-	}
-
-# preauth2.c:133 auto-registers pkinit as a *dynamic* clpreauth module
-# whether or not it was built, so a build without it still tries to
-# load the .so and writes "Error loading plugin module pkinit" into
-# every trace. --disable-pkinit cannot prevent that; only disabling the
-# module here can, and a clean trace is worth having in something whose
-# whole purpose is diffing transcripts.
-[plugins]
-	clpreauth = {
-		disable = pkinit
-	}
-EOF
-
-# kdc_listen = "" disables UDP listening outright; kdc_tcp_listen keeps
-# TCP. The older kdc_ports/kdc_tcp_ports names are only consulted when
-# these are absent, so setting these is enough.
 # supported_enctypes is set explicitly, and the order matters.
 #
 # The default is only the two RFC 3962 types
@@ -112,81 +90,195 @@ EOF
 # match the order internal/crypto reports from Supported(), or the two
 # implementations seal with different enctypes and the diff is about
 # the fixture rather than the code.
+ETYPES="aes256-cts-hmac-sha384-192:normal \
+aes128-cts-hmac-sha256-128:normal \
+aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal"
+
+# client_realms writes a krb5.conf [realms] entry per realm. Every one
+# of them is the same KDC, because one krb5kdc serves them all.
+client_realms() {
+	for pair in $REALMS; do
+		printf '\t%s = {\n' "${pair%:*}"
+		printf '\t\tkdc = 127.0.0.1:%s\n\t}\n\n' \
+			"$KRB5_KDC_PORT"
+	done
+}
+
+# kdc_realms writes a kdc.conf [realms] entry per realm, each with its
+# own database and stash: four realms in one process still means four
+# separate databases and four master keys.
 #
-# The master key is left at the default, aes256-cts-hmac-sha1-96
+# kdc_listen = "" disables UDP listening outright and kdc_tcp_listen
+# keeps TCP. The older kdc_ports/kdc_tcp_ports names are only consulted
+# when these are absent, so setting these is enough.
+#
+# Each master key is left at the default, aes256-cts-hmac-sha1-96
 # (DEFAULT_KDC_ENCTYPE, osconf.hin:90), because it is derived from the
 # master password and the Go side has to derive the same one.
-cat >"$KRB5_KDC_PROFILE" <<EOF
+kdc_realms() {
+	for pair in $REALMS; do
+		printf '\t%s = {\n' "${pair%:*}"
+		printf '\t\tsupported_enctypes = %s\n' "$ETYPES"
+		printf '\t\tdatabase_module = %s\n' "${pair#*:}"
+		printf '\t\tkey_stash_file = %s/%s.stash\n' \
+			"$KRB5_TESTDIR" "${pair#*:}"
+		printf '\t\tacl_file = %s/acl\n' "$KRB5_TESTDIR"
+		printf '\t\tdict_file = %s/dictfile\n' "$KRB5_TESTDIR"
+		printf '\t\tkdc_listen = ""\n'
+		printf '\t\tkdc_tcp_listen = %s\n\t}\n\n' \
+			"$KRB5_KDC_PORT"
+	done
+}
+
+# db_modules writes the [dbmodules] entries the stanzas above name.
+db_modules() {
+	for pair in $REALMS; do
+		printf '\t%s = {\n' "${pair#*:}"
+		printf '\t\tdb_library = db2\n'
+		printf '\t\tdatabase_name = %s/%s\n\t}\n\n' \
+			"$KRB5_TESTDIR" "${pair#*:}"
+	done
+}
+
+# dns_lookup_kdc, dns_canonicalize_hostname, rdns and qualify_shortname
+# are all off so that no name resolution reaches a transcript.
+#
+# udp_preference_limit = 1 puts TCP first. It is not sufficient on its
+# own -- both protocols are tried if the first attempt fails -- which
+# is why kdc_listen above removes UDP from the server as well.
+#
+# The [capaths] entry names the one path that is not hierarchical:
+# KDIAMOND.TEST and FOREIGN.TEST share only the "TEST" suffix, so
+# without it a client would look for krbtgt/TEST and fail. The three
+# realms of the longer path need no entry and deliberately do not get
+# one -- a capaths entry *replaces* the hierarchical walk, and the
+# hierarchical walk is the only thing the Go side implements.
+#
+# preauth2.c:133 auto-registers pkinit as a *dynamic* clpreauth module
+# whether or not it was built, so a build without it still tries to
+# load the .so and writes "Error loading plugin module pkinit" into
+# every trace. --disable-pkinit cannot prevent that; only disabling the
+# module here can, and a clean trace is worth having in something whose
+# whole purpose is diffing transcripts.
+{
+	cat <<EOF
+[libdefaults]
+	default_realm = $KRB5_REALM
+	dns_lookup_kdc = false
+	dns_lookup_realm = false
+	dns_canonicalize_hostname = false
+	rdns = false
+	qualify_shortname = ""
+	udp_preference_limit = 1
+	noaddresses = true
+
+[realms]
+EOF
+	client_realms
+	cat <<EOF
+[capaths]
+	$KRB5_REALM = {
+		$KRB5_FOREIGN_REALM = .
+	}
+	$KRB5_FOREIGN_REALM = {
+		$KRB5_REALM = .
+	}
+
+[plugins]
+	clpreauth = {
+		disable = pkinit
+	}
+EOF
+} >"$KRB5_CONFIG"
+
+{
+	cat <<EOF
 [kdcdefaults]
 	kdc_listen = ""
 	kdc_tcp_listen = $KRB5_KDC_PORT
 
 [realms]
-	$KRB5_REALM = {
-		supported_enctypes = aes256-cts-hmac-sha384-192:normal aes128-cts-hmac-sha256-128:normal aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal
-		database_module = db
-		key_stash_file = $KRB5_TESTDIR/stash
-		acl_file = $KRB5_TESTDIR/acl
-		dict_file = $KRB5_TESTDIR/dictfile
-		kdc_listen = ""
-		kdc_tcp_listen = $KRB5_KDC_PORT
-	}
-
-	$KRB5_FOREIGN_REALM = {
-		supported_enctypes = aes256-cts-hmac-sha384-192:normal aes128-cts-hmac-sha256-128:normal aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal
-		database_module = fdb
-		key_stash_file = $KRB5_TESTDIR/fstash
-		acl_file = $KRB5_TESTDIR/acl
-		dict_file = $KRB5_TESTDIR/dictfile
-		kdc_listen = ""
-		kdc_tcp_listen = $KRB5_KDC_PORT
-	}
-
-[dbmodules]
-	db = {
-		db_library = db2
-		database_name = $KRB5_TESTDIR/db
-	}
-
-	fdb = {
-		db_library = db2
-		database_name = $KRB5_TESTDIR/fdb
-	}
-
+EOF
+	kdc_realms
+	printf '[dbmodules]\n'
+	db_modules
+	cat <<EOF
 [logging]
 	kdc = FILE:$KRB5_TESTDIR/kdc.log
 	default = FILE:$KRB5_TESTDIR/others.log
 EOF
+} >"$KRB5_KDC_PROFILE"
 
 printf '%s/admin@%s *e\n' "$KRB5_USER" "$KRB5_REALM" >"$KRB5_TESTDIR/acl"
 printf 'weak_password\n' >"$KRB5_TESTDIR/dictfile"
 
-kdb5_util create -s -P "$KRB5_MASTER_PASSWORD" >/dev/null
+# kadm runs one kadmin.local command against a named realm's database.
+kadm() {
+	realm="$1"
+	shift
+	kadmin.local -r "$realm" -q "$*" >/dev/null
+}
+
+# make_realm creates a realm's database and resets its own krbtgt key
+# from a password.
+#
+# The krbtgt key kdb5_util create writes is a *random* key
+# (tgt_keysalt_iterate, kadmin/dbutil/kdb5_create.c:441-460) -- seeded
+# from the master password, but still the output of the PRNG, so it is
+# not something an independent implementation can reproduce. Setting it
+# from a password makes it string_to_key over the krbtgt's own default
+# salt, which is derivable from the realm alone. That is what lets the
+# harness decrypt the C KDC's *ticket* and compare the EncTicketPart,
+# where most of what an exchange decides actually lives.
+#
+# cpw bumps the key version, so every krbtgt ends up at kvno 2 while the
+# user principals stay at 1. That is deterministic and left visible
+# rather than papered over.
+make_realm() {
+	kdb5_util -r "$1" create -s -P "$2" >/dev/null
+	kadm "$1" "cpw -pw $3 krbtgt/$1@$1"
+}
+
+# trust adds an inter-realm principal to one database.
+#
+# The principal is krbtgt/<granting realm>@<holding realm>, and both
+# ends of a trust hold the same one with the same key: the holder so it
+# can *issue* a cross-realm ticket-granting ticket, the grantor so it
+# can verify one. Its default salt is its realm plus its name
+# components, which both sides spell identically, so one password gives
+# one key.
+trust() {
+	kadm "$1" "addprinc -pw $4 -kvno 1 krbtgt/$3@$2"
+}
+
+# The realm the Go KDC also serves, and everything in it.
+make_realm "$KRB5_REALM" "$KRB5_MASTER_PASSWORD" \
+	"$KRB5_TGT_PASSWORD"
 
 # -kvno 1 pins the key version number, which would otherwise be a
 # moving part in every reply that carries one. The principal is created
 # without +requires_preauth: that is the single-round-trip, padata-free
 # exchange, which is both the easiest case to get right and the most
 # deterministic one to compare.
-kadmin.local -q "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
-	$KRB5_USER@$KRB5_REALM" >/dev/null
+kadm "$KRB5_REALM" "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
+	$KRB5_USER@$KRB5_REALM"
 
 # A second principal that does demand pre-authentication, so the
 # PA-ENC-TIMESTAMP path has something to exercise without disturbing
 # the simple case above.
-kadmin.local -q "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
-	+requires_preauth preauth@$KRB5_REALM" >/dev/null
+kadm "$KRB5_REALM" "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
+	+requires_preauth preauth@$KRB5_REALM"
 
 # A service for the TGS exchange to ask for a ticket to. It is created
 # from a password rather than with a random key for the same reason
-# krbtgt is reset below: the harness has to decrypt the ticket the KDC
+# every krbtgt is reset: the harness has to decrypt the ticket the KDC
 # issues, and a key derived from a password is one it can compute.
 #
 # -kvno 1 pins the version, and no +requires_preauth: a service ticket
 # inherits PRE-AUTHENT from the TGT rather than establishing it, so
 # requiring it here would only test the refusal path.
-kadmin.local -q "addprinc -pw $KRB5_SERVICE_PASSWORD -kvno 1 \
-	$KRB5_SERVICE@$KRB5_REALM" >/dev/null
+kadm "$KRB5_REALM" "addprinc -pw $KRB5_SERVICE_PASSWORD -kvno 1 \
+	$KRB5_SERVICE@$KRB5_REALM"
 
 # A user-to-user peer: someone with a password and no keytab, which is
 # the whole reason the mechanism exists. -allow_svr sets DISALLOW_SVR,
@@ -197,61 +289,42 @@ kadmin.local -q "addprinc -pw $KRB5_SERVICE_PASSWORD -kvno 1 \
 #
 # The password is fixed like every other, so the harness can derive the
 # key and obtain a TGT for this principal the way its owner would.
-kadmin.local -q "addprinc -pw $KRB5_PEER_PASSWORD -kvno 1 \
-	-allow_svr $KRB5_PEER@$KRB5_REALM" >/dev/null
+kadm "$KRB5_REALM" "addprinc -pw $KRB5_PEER_PASSWORD -kvno 1 \
+	-allow_svr $KRB5_PEER@$KRB5_REALM"
 
-# The krbtgt key kdb5_util create writes is a *random* key
-# (tgt_keysalt_iterate, kadmin/dbutil/kdb5_create.c:441-460) -- seeded
-# from the master password, but still the output of the PRNG, so it is
-# not something an independent implementation can reproduce. Setting it
-# from a password makes it string_to_key over the krbtgt's own default
-# salt, which is derivable from the realm alone. That is what lets the
-# harness decrypt the C KDC's *ticket* and compare the EncTicketPart,
-# where most of what the AS exchange decides actually lives.
-#
-# cpw bumps the key version, so krbtgt ends up at kvno 2 while the user
-# principals stay at 1. That is deterministic and left visible rather
-# than papered over.
-kadmin.local -q "cpw -pw $KRB5_TGT_PASSWORD \
-	krbtgt/$KRB5_REALM@$KRB5_REALM" >/dev/null
+# The one-hop trust, FOREIGN.TEST to here. Each master password differs
+# from every other: sharing one would make a bug that confused two
+# realms' master keys invisible.
+make_realm "$KRB5_FOREIGN_REALM" \
+	"$KRB5_FOREIGN_MASTER_PASSWORD" "$KRB5_FOREIGN_TGT_PASSWORD"
+kadm "$KRB5_FOREIGN_REALM" \
+	"addprinc -pw $KRB5_REMOTE_PASSWORD -kvno 1 \
+	$KRB5_REMOTE@$KRB5_FOREIGN_REALM"
+trust "$KRB5_FOREIGN_REALM" "$KRB5_FOREIGN_REALM" "$KRB5_REALM" \
+	"$KRB5_INTERREALM_PASSWORD"
+trust "$KRB5_REALM" "$KRB5_FOREIGN_REALM" "$KRB5_REALM" \
+	"$KRB5_INTERREALM_PASSWORD"
 
-# The inter-realm key, in *this* realm's database. It is what lets this
-# KDC verify a ticket-granting ticket the foreign realm issued for a
-# service here, and it is the whole of the trust: a KDC holds a key for
-# krbtgt/<here>@<there> exactly when it has agreed to trust <there>.
-#
-# Note the principal's name says <here> and its realm says <there>, and
-# that the same principal with the same key exists in both databases
-# below -- the default salt is realm plus name components, so one
-# password gives one key on both sides.
-kadmin.local -q "addprinc -pw $KRB5_INTERREALM_PASSWORD -kvno 1 \
-	krbtgt/$KRB5_REALM@$KRB5_FOREIGN_REALM" >/dev/null
+# The three-realm path: a client in the far realm reaches a service here
+# through the middle one, and the middle one is what has to appear in
+# the issued ticket's transited field. With a single boundary the field
+# stays empty and nothing about it is exercised.
+make_realm "$KRB5_MID_REALM" "$KRB5_MID_MASTER_PASSWORD" \
+	"$KRB5_MID_TGT_PASSWORD"
+make_realm "$KRB5_FAR_REALM" "$KRB5_FAR_MASTER_PASSWORD" \
+	"$KRB5_FAR_TGT_PASSWORD"
+kadm "$KRB5_FAR_REALM" "addprinc -pw $KRB5_FAR_PASSWORD -kvno 1 \
+	$KRB5_FAR_USER@$KRB5_FAR_REALM"
 
-# A second realm, in this same container and on this same port. krb5kdc
-# serves as many realms as it is given -r for, so one container is
-# enough and the harness needs no second port -- and the cross-realm
-# comparison is then of the *same* cross TGT presented to the C KDC and
-# to the Go one, which is the only comparison worth making.
-#
-# Its master key is a different password from the first realm's. Sharing
-# one would make a bug that confused the two realms' master keys
-# invisible.
-kdb5_util -r "$KRB5_FOREIGN_REALM" create -s \
-	-P "$KRB5_FOREIGN_MASTER_PASSWORD" >/dev/null
-
-kadmin.local -r "$KRB5_FOREIGN_REALM" \
-	-q "addprinc -pw $KRB5_REMOTE_PASSWORD -kvno 1 \
-	$KRB5_REMOTE@$KRB5_FOREIGN_REALM" >/dev/null
-
-kadmin.local -r "$KRB5_FOREIGN_REALM" \
-	-q "cpw -pw $KRB5_FOREIGN_TGT_PASSWORD \
-	krbtgt/$KRB5_FOREIGN_REALM@$KRB5_FOREIGN_REALM" >/dev/null
-
-# The other half of the trust, and the same principal as above: the
-# foreign realm holds it so it can *issue* the cross TGT, and the local
-# realm holds it so it can verify one.
-kadmin.local -r "$KRB5_FOREIGN_REALM" \
-	-q "addprinc -pw $KRB5_INTERREALM_PASSWORD -kvno 1 \
-	krbtgt/$KRB5_REALM@$KRB5_FOREIGN_REALM" >/dev/null
+# Far trusts middle, and middle trusts here. Each trust is held at both
+# ends, which is four entries for two trusts.
+trust "$KRB5_FAR_REALM" "$KRB5_FAR_REALM" "$KRB5_MID_REALM" \
+	"$KRB5_FAR_MID_PASSWORD"
+trust "$KRB5_MID_REALM" "$KRB5_FAR_REALM" "$KRB5_MID_REALM" \
+	"$KRB5_FAR_MID_PASSWORD"
+trust "$KRB5_MID_REALM" "$KRB5_MID_REALM" "$KRB5_REALM" \
+	"$KRB5_MID_LOCAL_PASSWORD"
+trust "$KRB5_REALM" "$KRB5_MID_REALM" "$KRB5_REALM" \
+	"$KRB5_MID_LOCAL_PASSWORD"
 
 exec "$@"

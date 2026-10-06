@@ -78,17 +78,10 @@ func (s *tgsState) encTicketPart() wire.EncTicketPart {
 		Key:    s.session,
 		CRealm: s.header.CRealm,
 		CName:  s.header.CName,
-		// The transited encoding is *copied from the
-		// presented ticket*, not built fresh: for a request
-		// that stays in one realm upstream sets t->transited
-		// to the header ticket's (do_tgs_req.c:787-789) and
-		// uses it for every case, renewal included (:1036).
-		// Within a single realm that is an empty list of type
-		// 1, so the result looks the same as inventing one --
-		// but copying is what carries a cross-realm path
-		// forward, and inventing one would quietly discard
-		// it.
-		Transited: s.header.Transited,
+		// buildTransited decided this: the presented ticket's
+		// path, with this realm's predecessor added when the
+		// request crossed a second boundary.
+		Transited: s.transited,
 		// The addresses pass through as opaque DER because
 		// nothing here reads them; which ticket's they are is
 		// ticketAddresses' business.

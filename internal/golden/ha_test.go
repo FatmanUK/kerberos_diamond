@@ -10,6 +10,7 @@ import (
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"gorm.io/gorm"
 )
 
 // This file checks the claim the project exists to make: that a KDC
@@ -295,14 +296,24 @@ func (p *scratchPostgres) start(
 	p.waitUntilUp(t, ctx)
 }
 
-// waitUntilUp waits for Postgres to answer, not merely to be
-// dialable.
+// waitUntilUp waits for Postgres to answer *through the published
+// port*, which takes two checks and not one.
 //
-// A TCP connect is not enough and the reason is the same trap the
-// oracle container had: podman binds the published port when the
-// container is created, so the forwarder accepts connections while
-// the server behind it is still starting and resets them. pg_isready
-// inside the container asks the server.
+// A TCP connect alone is not enough, and the reason is the trap this
+// project has now hit three times: podman binds the published port
+// when the container is created, so the forwarder accepts a
+// connection while the server behind it is still starting and then
+// resets it. pg_isready inside the container asks the server
+// directly, which settles the server half.
+//
+// The second check settles the other half, and it is the one this
+// test was missing. pg_isready passing says nothing about the
+// *forwarder*: a connection from the host can still be reset after
+// the server is ready, which is exactly how this test failed
+// intermittently -- "failed to receive message: read: connection
+// reset by peer" from the very first connection the KDC made. So the
+// wait ends when a real query over the real connection string
+// succeeds, because that is what the KDC is about to do.
 func (p *scratchPostgres) waitUntilUp(
 	t *testing.T,
 	ctx context.Context,
@@ -310,10 +321,7 @@ func (p *scratchPostgres) waitUntilUp(
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		cmd := exec.CommandContext(ctx, "podman", "exec",
-			p.name, "pg_isready", "-U", "kdiamond",
-			"-d", "kdiamond_test", "-q")
-		if cmd.Run() == nil {
+		if p.ready(ctx) && p.answers(ctx) {
 			return
 		}
 		select {
@@ -323,6 +331,32 @@ func (p *scratchPostgres) waitUntilUp(
 		}
 	}
 	t.Fatalf("Postgres never answered in %s", p.name)
+}
+
+// ready asks the server, from inside the container.
+func (p *scratchPostgres) ready(ctx context.Context) bool {
+	return exec.CommandContext(ctx, "podman", "exec",
+		p.name, "pg_isready", "-U", "kdiamond",
+		"-d", "kdiamond_test", "-q").Run() == nil
+}
+
+// answers asks the server through the published port, which is the
+// path the KDC uses.
+func (p *scratchPostgres) answers(ctx context.Context) bool {
+	db, err := openAdmin(p.url)
+	if err != nil {
+		return false
+	}
+	defer closeDB(db)
+	return db.WithContext(ctx).Exec("SELECT 1").Error == nil
+}
+
+// closeDB releases a GORM handle's pool, which is otherwise left open
+// until the test binary exits.
+func closeDB(db *gorm.DB) {
+	if sql, err := db.DB(); err == nil {
+		sql.Close()
+	}
 }
 
 // Readiness is readiness, not liveness: a KDC whose database is away

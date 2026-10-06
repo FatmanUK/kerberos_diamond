@@ -111,6 +111,16 @@ ENV KRB5_REALM=KDIAMOND.TEST \
     KRB5_REMOTE_PASSWORD=remotepassword \
     KRB5_FOREIGN_TGT_PASSWORD=foreigntgtpassword \
     KRB5_INTERREALM_PASSWORD=interrealmpassword \
+    KRB5_MID_REALM=OTHER.KDIAMOND.TEST \
+    KRB5_MID_MASTER_PASSWORD=midmaster \
+    KRB5_MID_TGT_PASSWORD=midtgtpassword \
+    KRB5_MID_LOCAL_PASSWORD=midlocalpassword \
+    KRB5_FAR_REALM=SUB.OTHER.KDIAMOND.TEST \
+    KRB5_FAR_MASTER_PASSWORD=farmaster \
+    KRB5_FAR_TGT_PASSWORD=fartgtpassword \
+    KRB5_FAR_USER=far \
+    KRB5_FAR_PASSWORD=farpassword \
+    KRB5_FAR_MID_PASSWORD=farmidpassword \
     KRB5_KDC_PORT=8088 \
     KRB5_TESTDIR=/realm \
     TZ=UTC \
@@ -139,4 +149,8 @@ ENTRYPOINT ["/usr/local/bin/realm-setup"]
 # container. The names are the image's fixed fixture, like the
 # passwords above, so they are written out rather than taken from the
 # environment -- CMD cannot expand a variable anyway.
-CMD ["krb5kdc", "-n", "-r", "KDIAMOND.TEST", "-r", "FOREIGN.TEST"]
+CMD ["krb5kdc", "-n", \
+     "-r", "KDIAMOND.TEST", \
+     "-r", "FOREIGN.TEST", \
+     "-r", "OTHER.KDIAMOND.TEST", \
+     "-r", "SUB.OTHER.KDIAMOND.TEST"]

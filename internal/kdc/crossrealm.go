@@ -42,31 +42,3 @@ func (k *KDC) checkLineage(s *tgsState) (int32, string) {
 	}
 	return 0, ""
 }
-
-// checkCrossTransit decides whether the transited list can be carried
-// across unchanged, which upstream does at gather_tgs_req_info
-// (do_tgs_req.c:786-800).
-//
-// The condition reads oddly until the two-realm case is worked
-// through. The list is reused when the header ticket's server realm
-// is the client's own: that is a ticket the client's *own* KDC issued
-// for a direct trust, so no realm has been passed through that the
-// client and server realms do not already name. Anything else means a
-// third realm is in the path and has to be recorded, or a service
-// could not tell a one-hop ticket from one that crossed somewhere it
-// does not trust.
-//
-// Building that record is add_to_transited (kdc/kdc_transit.c:144)
-// and is not implemented, so a path needing it is refused rather than
-// carried across with the third realm silently dropped. That is the
-// same choice checkTransited makes about *evaluating* a non-empty
-// path, and for the same reason.
-func (k *KDC) checkCrossTransit(s *tgsState) (int32, string) {
-	if !s.isCrossRealm(k.Realm) {
-		return 0, ""
-	}
-	if s.headerRealm != s.header.CRealm {
-		return wire.ErrCodePathNotAccepted, "BAD_TRANSIT"
-	}
-	return 0, ""
-}
