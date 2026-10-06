@@ -86,6 +86,7 @@ func pointAtDiamond(
 ) []string {
 	t.Helper()
 	d := diamond(t, "kd_golden_e2e_"+tag, time.Now().UTC)
+	lastDiamond = d
 	s, err := Serve(ctx, d)
 	if err != nil {
 		t.Fatalf("starting the Go KDC: %v", err)
@@ -105,6 +106,23 @@ func pointAtDiamond(
 		env = append(env, "KRB5_TRACE=/dev/stderr")
 	}
 	return env
+}
+
+// lastDiamond is the Go KDC pointAtDiamond most recently started.
+//
+// A test that needs to reach past the KDC and adjust a principal
+// directly has no other handle on it: pointAtDiamond returns the
+// client's environment, not the server. Tests here never run in
+// parallel, so one slot is enough.
+var lastDiamond *Diamond
+
+// diamondOf returns that KDC.
+func diamondOf(t *testing.T) *Diamond {
+	t.Helper()
+	if lastDiamond == nil {
+		t.Fatal("no Go KDC has been started")
+	}
+	return lastDiamond
 }
 
 // assertTicket checks klist actually shows a TGT for the right

@@ -30,21 +30,11 @@ func (k *KDC) tgsAssemble(s *tgsState) (*wire.TGSRep, error) {
 //
 // The client named in it is the one from the presented ticket, not
 // anything in the request: a TGS-REQ has no cname field, because the
-// ticket is what says who the client is.
+// ticket is what says who the client is. For a renewal or a
+// validation the *server* comes from the presented ticket as well
+// (do_tgs_req.c:1012-1016).
 func (k *KDC) tgsTicket(s *tgsState) (*wire.Ticket, error) {
-	plain, err := wire.MarshalEncTicketPart(wire.EncTicketPart{
-		Flags:  s.flags,
-		Key:    s.session,
-		CRealm: s.header.CRealm,
-		CName:  s.header.CName,
-		Transited: wire.TransitedEncoding{
-			Type: wire.TransitedDomainX500Compress,
-		},
-		AuthTime:  unstamp(s.authTime),
-		StartTime: optStamp(s.start),
-		EndTime:   unstamp(s.end),
-		RenewTill: optStamp(s.renew),
-	})
+	plain, err := wire.MarshalEncTicketPart(s.encTicketPart())
 	if err != nil {
 		return nil, err
 	}
@@ -59,13 +49,56 @@ func (k *KDC) tgsTicket(s *tgsState) (*wire.Ticket, error) {
 	}
 	return &wire.Ticket{
 		Realm: k.Realm,
-		SName: *s.req.Body.SName,
+		SName: s.issuedFor(),
 		EncPart: wire.EncryptedData{
 			EType:  int32(s.serverEType),
 			KVNO:   s.serverKVNO,
 			Cipher: ct,
 		},
 	}, nil
+}
+
+// encTicketPart is what goes inside the new ticket.
+func (s *tgsState) encTicketPart() wire.EncTicketPart {
+	return wire.EncTicketPart{
+		Flags:  s.flags,
+		Key:    s.session,
+		CRealm: s.header.CRealm,
+		CName:  s.header.CName,
+		// The transited encoding is *copied from the
+		// presented ticket*, not built fresh: for a request
+		// that stays in one realm upstream sets t->transited
+		// to the header ticket's (do_tgs_req.c:787-789) and
+		// uses it for every case, renewal included (:1036).
+		// Within a single realm that is an empty list of type
+		// 1, so the result looks the same as inventing one --
+		// but copying is what carries a cross-realm path
+		// forward, and inventing one would quietly discard
+		// it.
+		Transited: s.header.Transited,
+		// The addresses come from the presented ticket too,
+		// and pass through as opaque DER because nothing here
+		// reads them.
+		CAddr:     s.header.CAddr,
+		AuthTime:  unstamp(s.authTime),
+		StartTime: optStamp(s.start),
+		EndTime:   unstamp(s.end),
+		RenewTill: optStamp(s.renew),
+	}
+}
+
+// issuedFor is the server the new ticket names.
+//
+// For a renewal or a validation it is the presented ticket's server;
+// checkReissue has already refused the case where that disagrees with
+// the request, so the two are the same name by the time this runs and
+// the distinction is documentation rather than logic.
+func (s *tgsState) issuedFor() wire.PrincipalName {
+	opts := s.req.Body.Options
+	if opts&(wire.OptValidate|wire.OptRenew) != 0 {
+		return s.headerSrv
+	}
+	return *s.req.Body.SName
 }
 
 // tgsEncPart seals the reply's half under the reply key.
@@ -90,7 +123,7 @@ func (k *KDC) tgsEncPart(s *tgsState) (*wire.EncryptedData, error) {
 		EndTime:   unstamp(s.end),
 		RenewTill: optStamp(s.renew),
 		SRealm:    k.Realm,
-		SName:     *s.req.Body.SName,
+		SName:     s.issuedFor(),
 	})
 	if err != nil {
 		return nil, err

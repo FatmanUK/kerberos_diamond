@@ -405,3 +405,318 @@ func assertServiceTicket(
 		}
 	}
 }
+
+// renewableTGTFromTheC obtains a renewable TGT from the C KDC.
+//
+// The realm's principals have max_renewable_life zero by kadmin's
+// default, so a renewable request would otherwise be answered with a
+// renew-till equal to the start time and there would be nothing to
+// renew. kadmin.local is the way to change that, which is also the
+// first thing in this project that wants a kadmin of its own.
+func renewableTGTFromTheC(
+	t *testing.T,
+	ctx context.Context,
+	o *Oracle,
+) (tgt, wire.EncKDCRepPart) {
+	t.Helper()
+	grantRenewableLife(t, ctx, o)
+	till := time.Now().UTC().Add(requestedLife).Truncate(
+		time.Second)
+	req := asRequest(t, UserName, till)
+	req.Body.Options |= wire.OptRenewable
+	req.Body.RTime = till.Add(48 * time.Hour)
+	msg, err := wire.MarshalASReq(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := o.SendRaw(ctx, msg)
+	if err != nil {
+		t.Fatalf("asking the C KDC: %v", err)
+	}
+	x := open(t, raw, UserPassword, []string{UserName})
+	if !x.Enc.Flags.Has(wire.FlagRenewable) {
+		t.Fatal("the C KDC issued a non-renewable TGT")
+	}
+	return tgt{
+		ticket:  x.Rep.Ticket,
+		session: x.Enc.Key.KeyValue,
+	}, x.Enc
+}
+
+// renewRequest builds the TGS-REQ a client sends to renew a TGT.
+//
+// The options carry the presented ticket's own flags masked by
+// KDC_TKT_COMMON_MASK, which is what a real client does
+// (lib/krb5/krb/val_renew.c:61) and what keeps the renewed ticket
+// renewable.
+func renewRequest(
+	t *testing.T,
+	g tgt,
+	carry wire.Flags,
+	till time.Time,
+) []byte {
+	t.Helper()
+	const mask = wire.FlagForwardable | wire.FlagProxiable |
+		wire.FlagMayPostdate | wire.FlagRenewable
+	req := wire.TGSReq{
+		PAData: []wire.PAData{{Type: wire.PAReqEncPARep}},
+		Body:   renewBody(carry&mask, till),
+	}
+	draft, err := wire.MarshalTGSReq(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyDER, err := wire.ReqBodyBytes(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.PAData = append(req.PAData, tgsAPReq(t, g, bodyDER))
+	msg, err := wire.MarshalTGSReq(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return msg
+}
+
+// renewBody is a renewal's request body, naming the krbtgt because
+// that is the ticket being renewed.
+func renewBody(carried wire.Flags, till time.Time) wire.KDCReqBody {
+	return wire.KDCReqBody{
+		Options: wire.OptRenew | carried,
+		Realm:   Realm,
+		SName: &wire.PrincipalName{
+			Type:       wire.NTSrvInst,
+			Components: []string{"krbtgt", Realm},
+		},
+		Till:  till,
+		Nonce: 0x7E,
+		EType: []int32{int32(crypto.AES256CTSHMACSHA196)},
+	}
+}
+
+// TestRenewalMatchesTheC compares a renewal field for field.
+//
+// Renewal is the case where the two implementations have the most
+// room to disagree without either looking wrong on its own: the times
+// come from three places at once -- the presented ticket's lifetime,
+// its renew-till, and the clock -- and the flags arrive already set
+// and have to be partly cleared.
+func TestRenewalMatchesTheC(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 30*time.Second)
+	defer cancel()
+
+	g, before := renewableTGTFromTheC(t, ctx, o)
+	till := before.EndTime
+	msg := renewRequest(t, g, before.Flags, till)
+
+	cRaw, err := o.SendRaw(ctx, msg)
+	if err != nil {
+		t.Fatalf("asking the C KDC: %v", err)
+	}
+	cx := openRenewed(t, cRaw, g)
+
+	d := diamond(t, "kd_golden_renew",
+		pinned(cx.Enc.EffectiveStartTime()))
+	provisionRenewable(t, ctx, d)
+	goRaw, err := d.KDC.Handle(msg)
+	if err != nil {
+		t.Fatalf("asking the Go KDC: %v", err)
+	}
+	gx := openRenewed(t, goRaw, g)
+
+	assertRenewed(t, "oracle", cx, before)
+	assertRenewed(t, "diamond", gx, before)
+	reportDiffs(t, cx, gx, fastExemptions()...)
+}
+
+// openRenewed decrypts a renewed TGT. Both halves open with keys the
+// harness holds: the reply with the old session key, the ticket with
+// the krbtgt's.
+func openRenewed(t *testing.T, raw []byte, g tgt) Exchange {
+	t.Helper()
+	rep := decodeTGSRep(t, raw)
+	enc := decryptPart(t, rep.EncPart, g.session,
+		crypto.UsageTGSRepEncPartSessKey)
+	tkt := decrypt(t, rep.Ticket.EncPart, TgtPassword,
+		[]string{"krbtgt", Realm}, crypto.UsageKDCRepTicket)
+	return Exchange{
+		Rep: rep,
+		Enc: decodeEncPart(t, enc),
+		Tkt: decodeTktPart(t, tkt),
+	}
+}
+
+// provisionRenewable gives the Go realm's principals the renewable
+// lifetime the C side was just given by kadmin, so the comparison is
+// of the implementations and not of two differently configured
+// realms.
+func provisionRenewable(
+	t *testing.T,
+	ctx context.Context,
+	d *Diamond,
+) {
+	t.Helper()
+	for _, cs := range [][]string{
+		{UserName}, {"krbtgt", Realm},
+	} {
+		name := storeName(cs)
+		p, err := d.Store.Lookup(ctx, name)
+		if err != nil {
+			t.Fatalf("Lookup %s: %v", name, err)
+		}
+		p.MaxRenewableLife = int32(
+			(7 * 24 * time.Hour) / time.Second)
+		if err := d.Store.Save(ctx, p); err != nil {
+			t.Fatalf("Save %s: %v", name, err)
+		}
+	}
+}
+
+// assertRenewed checks a renewal did what renewal means, on each side
+// separately, before the two are compared.
+//
+// Without this a pair of implementations that both refused to move
+// the window, or both dropped the renewable flag, would agree
+// perfectly.
+func assertRenewed(
+	t *testing.T,
+	side string,
+	x Exchange,
+	before wire.EncKDCRepPart,
+) {
+	t.Helper()
+	if !x.Enc.AuthTime.Equal(before.AuthTime) {
+		t.Errorf("%s: authtime changed from %v to %v", side,
+			before.AuthTime, x.Enc.AuthTime)
+	}
+	if !x.Enc.Flags.Has(wire.FlagRenewable) {
+		t.Errorf("%s: the renewed ticket is not renewable",
+			side)
+	}
+	if !x.Enc.RenewTill.Equal(before.RenewTill) {
+		t.Errorf("%s: renew-till moved from %v to %v", side,
+			before.RenewTill, x.Enc.RenewTill)
+	}
+	if x.Enc.EndTime.After(before.RenewTill) {
+		t.Errorf("%s: endtime %v is past renew-till %v", side,
+			x.Enc.EndTime, before.RenewTill)
+	}
+	if x.Enc.SName.String() != "krbtgt/"+Realm {
+		t.Errorf("%s: renewed ticket names %q", side,
+			x.Enc.SName)
+	}
+}
+
+// TestStockKinitRenewsAgainstTheGoKDC drives a renewal with the real
+// client: kinit gets a TGT, kinit -R renews it.
+//
+// A renewal is the one exchange where a client checks the reply
+// against its own copy of the ticket it presented, so this is worth
+// more than the field comparison alone -- it is the only case so far
+// where a *stale* answer would be caught by the client rather than by
+// a test.
+func TestStockKinitRenewsAgainstTheGoKDC(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 60*time.Second)
+	defer cancel()
+
+	env := pointAtDiamond(t, ctx, o, "renew", true)
+	grantRenewableLife(t, ctx, o)
+	d := diamondOf(t)
+	provisionRenewable(t, ctx, d)
+
+	out, err := o.ExecEnv(ctx, env, UserPassword+"\n",
+		"kinit", "-r", "7d", "-l", "4h",
+		UserName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("kinit -r failed: %v\n%s", err, out)
+	}
+	before := renewUntil(t, ctx, o, env)
+
+	out, err = o.ExecEnv(ctx, env, "", "kinit", "-R")
+	if err != nil {
+		t.Fatalf("kinit -R failed: %v\n%s", err, out)
+	}
+	assertWentToTheShim(t, out)
+	// The renew-till must survive: it is the wall renewal cannot
+	// push, and a KDC that moved it would hand out an
+	// indefinitely-renewable credential.
+	after := renewUntil(t, ctx, o, env)
+	if after != before {
+		t.Errorf("renew-until moved from %q to %q",
+			before, after)
+	}
+	assertTicket(t, ctx, o, env, UserName)
+}
+
+// grantRenewableLife sets a renewable lifetime on the C realm's
+// principals, which kadmin's defaults leave at zero, and puts it back
+// afterwards.
+//
+// Restoring it matters because the oracle container is shared by
+// every test in this package: a realm left with a seven-day renewable
+// life would change what the AS comparison expects of renew-till, and
+// the two tests would then pass or fail depending on the order they
+// ran in.
+func grantRenewableLife(
+	t *testing.T,
+	ctx context.Context,
+	o *Oracle,
+) {
+	t.Helper()
+	setRenewLife(t, ctx, o, "7 days")
+	t.Cleanup(func() {
+		// A fresh context: t.Cleanup runs after the test
+		// function returns, by which time the test's own
+		// context has already been cancelled by its defer.
+		done, cancel := context.WithTimeout(
+			context.Background(), 20*time.Second)
+		defer cancel()
+		setRenewLife(t, done, o, "0")
+	})
+}
+
+func setRenewLife(
+	t *testing.T,
+	ctx context.Context,
+	o *Oracle,
+	life string,
+) {
+	t.Helper()
+	for _, princ := range []string{
+		UserName, "krbtgt/" + Realm,
+	} {
+		out, err := o.Exec(ctx, "kadmin.local", "-q",
+			"modprinc -maxrenewlife \""+life+"\" "+
+				princ+"@"+Realm)
+		if err != nil {
+			t.Fatalf("modprinc %s: %v\n%s",
+				princ, err, out)
+		}
+	}
+}
+
+// renewUntil reads the renew-until line klist prints, which is where
+// a renewable ticket's wall shows up in the client's own words.
+func renewUntil(
+	t *testing.T,
+	ctx context.Context,
+	o *Oracle,
+	env []string,
+) string {
+	t.Helper()
+	list, err := o.ExecEnv(ctx, env, "", "klist")
+	if err != nil {
+		t.Fatalf("klist failed: %v\n%s", err, list)
+	}
+	for _, line := range strings.Split(list, "\n") {
+		if strings.Contains(line, "renew until") {
+			return strings.TrimSpace(line)
+		}
+	}
+	t.Fatalf("klist shows no renew-until line:\n%s", list)
+	return ""
+}

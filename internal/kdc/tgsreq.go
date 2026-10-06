@@ -321,6 +321,9 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 	if code, status := checkTGSOpts(opts, s.header); code != 0 {
 		return code, status
 	}
+	if code, status := k.checkReissue(s); code != 0 {
+		return code, status
+	}
 	code, status := checkTGSService(
 		opts, s.server, s.header, s.now)
 	if code != 0 {
@@ -331,6 +334,35 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 		return code, status
 	}
 	return k.checkTransited(s)
+}
+
+// checkReissue guards the two options that reissue the presented
+// ticket rather than deriving a new one.
+//
+// Upstream names the issued ticket after the *header* ticket's server
+// (do_tgs_req.c:1012-1016) while sealing it with the key of the
+// server the *request* asked for, and nothing checks that the two
+// agree. A mismatched request therefore gets a ticket whose name and
+// key belong to different principals -- undecryptable by the
+// principal it names, and refused with BAD_INTEGRITY by whoever
+// receives it.
+//
+// This refuses the mismatch instead, with the error whose name is
+// exactly this condition: KDC_ERR_SERVER_NOMATCH, "Requested server
+// and ticket don't match". It is a deliberate divergence, recorded in
+// BOOTSTRAP.md §3.3, on the grounds that issuing an unusable ticket
+// is not behaviour worth preserving and a client that asks for one is
+// already broken. The normal case -- where a client renews the ticket
+// it holds -- is unaffected.
+func (k *KDC) checkReissue(s *tgsState) (int32, string) {
+	opts := s.req.Body.Options
+	if opts&(wire.OptValidate|wire.OptRenew) == 0 {
+		return 0, ""
+	}
+	if !s.req.Body.SName.Equal(s.headerSrv) {
+		return wire.ErrCodeServerNoMatch, "SERVER NOMATCH"
+	}
+	return 0, ""
 }
 
 // checkTransited evaluates the presented ticket's transited path and
@@ -365,21 +397,36 @@ func (k *KDC) checkTransited(s *tgsState) (int32, string) {
 // tgsTimes fills in the issued ticket's times, from
 // do_tgs_req.c:813-852.
 func (k *KDC) tgsTimes(s *tgsState) {
-	s.flags = tgsTicketFlags(s.req.Body.Options, s.server,
-		s.header)
+	opts := s.req.Body.Options
+	s.flags = tgsTicketFlags(opts, s.server, s.header)
 	if s.transitChecked {
 		s.flags |= wire.FlagTransitedPolicyChecked
+	}
+	if opts&wire.OptValidate != 0 {
+		validateTimes(s)
+		return
 	}
 	// The authtime is *preserved from the presented ticket*, not
 	// set to now: it records when the client last authenticated
 	// with a password, which a derived ticket does not change.
 	s.authTime = stamp(s.header.AuthTime)
-	if s.req.Body.Options&wire.OptPostdated != 0 {
+	if opts&wire.OptPostdated != 0 {
 		s.start = stamp(s.req.Body.From)
 	} else {
 		s.start = s.now
 	}
-	s.end = k.tgsEndTime(s)
+	if opts&wire.OptRenew != 0 {
+		s.end = renewEndTime(s)
+	} else {
+		s.end = k.tgsEndTime(s)
+	}
+	// kdc_get_ticket_renewtime clears TKT_FLG_RENEWABLE before it
+	// decides anything (kdc/kdc_util.c:1719), and that clearing
+	// is load-bearing for a renewal: the flag arrived already
+	// set, copied wholesale from the presented ticket, so without
+	// this a request that earns no renew time would still claim
+	// to be renewable.
+	s.flags &^= wire.FlagRenewable
 	s.renew = k.tgsRenewTime(s)
 	if s.renew != 0 {
 		s.flags |= wire.FlagRenewable
@@ -387,6 +434,40 @@ func (k *KDC) tgsTimes(s *tgsState) {
 	if s.start == s.authTime {
 		s.start = 0
 	}
+}
+
+// validateTimes handles KDC_OPT_VALIDATE, which takes the presented
+// ticket's times unchanged (do_tgs_req.c:820-824).
+//
+// It returns before the renew-time calculation and before the
+// starttime-equals-authtime rule, and both omissions matter. A
+// postdated ticket being validated keeps the starttime that said when
+// it became usable -- zeroing it would be the one thing a client
+// could not tolerate here -- and its renew time is not recomputed, so
+// the RENEWABLE flag survives from the header rather than being
+// re-earned.
+func validateTimes(s *tgsState) {
+	s.authTime = stamp(s.header.AuthTime)
+	s.start = stamp(s.header.StartTime)
+	s.end = stamp(s.header.EndTime)
+	s.renew = stamp(s.header.RenewTill)
+}
+
+// renewEndTime handles KDC_OPT_RENEW (do_tgs_req.c:832-836).
+//
+// The renewed ticket gets the *same lifetime* the presented one had,
+// starting now, and is then clamped to the renew-till the original
+// carried. So renewing does not extend how long a ticket is good for
+// at a stretch, only how far into the future that stretch can sit --
+// and the renew-till is a hard wall the client cannot push back.
+//
+// The request's till is ignored entirely, which is why this is not
+// tgsEndTime with different arguments.
+func renewEndTime(s *tgsState) uint32 {
+	hstart := stamp(s.header.EffectiveStartTime())
+	life := tsDelta(stamp(s.header.EndTime), hstart)
+	return tsMin(stamp(s.header.RenewTill),
+		tsIncr(s.start, life))
 }
 
 // tgsEndTime caps the new ticket by the presented ticket's end time.

@@ -145,6 +145,13 @@ func provision(
 	return nil
 }
 
+// storeName is the database key for a principal in this realm, which
+// the harness needs when it reaches past the KDC to adjust a
+// principal directly.
+func storeName(components []string) string {
+	return store.UnparseName(Realm, components)
+}
+
 // AS runs one request through the Go KDC and returns the reply bytes,
 // so that both sides of the comparison are driven through the same
 // encoded message.

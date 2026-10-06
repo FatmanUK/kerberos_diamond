@@ -38,6 +38,12 @@ that have aged worst in the C:
   HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
   checked, and the default salt is cross-checked against what the C KDC
   actually computes.
+- **Renewal works, and a stock `kinit -R` proves it.** A renewable TGT is
+  renewed through the shim and the client's own `klist` shows the renew-until
+  unmoved. The golden harness compares a renewal field for field as well,
+  which matters more here than anywhere else: a renewal's times come from
+  three places at once — the presented ticket's lifetime, its renew-till, and
+  the clock — and its flags arrive already set and have to be partly cleared.
 - **The TGS exchange works, and a stock `kvno` proves it.** An unmodified
   `kinit` gets a TGT and an unmodified `kvno` spends it for a service ticket,
   both against the Go KDC through `kdiamond-proxy`. The golden harness also
@@ -96,9 +102,8 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 2. **A `kadmin` equivalent**, as a `cmd/kdiamond` subcommand rather than a
    separate protocol. Provisioning principals through SQL is fine until
    something external needs to do it, and the golden fixture already wants it.
-3. **The TGS cases nothing issues yet** — renewal, validation, postdating,
-   forwarding, proxying, user-to-user — each of which has its refusal path
-   ported already, so the next increment is the issuing half.
+3. **The TGS cases nothing issues yet** — forwarding, proxying and
+   user-to-user — each of which has its refusal path ported already.
 
 ## 3. Project State
 
@@ -201,12 +206,22 @@ are not "fixed" back by accident.
   image, so each run begins from an identical database with no history.
 **The TGS exchange:**
 
-- **Only the ordinary case is implemented.** A client spends a TGT for a
-  service ticket. Renewal, validation, postdating, forwarding, proxying and
-  user-to-user (`ENC-TKT-IN-SKEY`) are all *refused* rather than ignored:
-  their policy rules are ported so that a request asking for one gets the
-  error upstream would give, but nothing issues such a ticket yet. Neither
-  is S4U2Self or S4U2Proxy, nor cross-realm.
+- **Renewal, validation and postdating issue tickets; the rest is refused.**
+  A client spends a TGT for a service ticket, renews a renewable ticket,
+  validates a postdated one, and can ask for a postdated ticket in the first
+  place. Forwarding, proxying and user-to-user (`ENC-TKT-IN-SKEY`) are
+  *refused* rather than ignored — their policy rules are ported so a request
+  asking for one gets the error upstream would give, but nothing issues such a
+  ticket. Neither S4U2Self nor S4U2Proxy, nor cross-realm.
+- **A renewal or validation naming a different server than the ticket is
+  refused**, which upstream does not do. It names the issued ticket after the
+  *presented* ticket's server (`do_tgs_req.c:1012-1016`) while sealing it with
+  the key of the server the *request* asked for, and nothing checks the two
+  agree — so a mismatched request gets a ticket whose name and key belong to
+  different principals, refused with `BAD_INTEGRITY` by whoever receives it.
+  This answers `KDC_ERR_SERVER_NOMATCH` instead, whose name is exactly the
+  condition. Issuing an unusable ticket is not behaviour worth preserving, and
+  the normal case — a client renewing the ticket it holds — is unaffected.
 - **No replay cache.** Upstream does not keep one for a TGS exchange either
   — "Don't use a replay cache" (`kdc/kdc_util.c:188`) — so the authenticator's
   clock skew is the whole of the replay window, as it is there. A KDC that
@@ -434,6 +449,11 @@ tests. It is green.
   mismatched client name, a stale clock, and a request asking for a flag its
   TGT does not carry. Each asserts the *specific* protocol error, because
   they are different codes and a client acts on them differently.
+- **Renewal and validation** — covered in process, differentially, and with a
+  stock `kinit -R`. The in-process cases pin the KDC's clock to move time
+  forward, and the client's clock with it: an authenticator left behind is
+  refused for skew before anything interesting is reached, which is how the
+  first draft of those tests failed.
 - **The harness has one declared exemption**, for the FAST advertisement
   above. An exemption is not a skipped field: `Compare` returns waived
   differences separately from real ones and the test logs every one on every
