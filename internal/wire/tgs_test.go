@@ -223,3 +223,56 @@ func TestEncTGSRepPartIsAlsoTag26(t *testing.T) {
 		t.Errorf("first byte is %02X, want 7A", tgs[0])
 	}
 }
+
+// The authenticator's checksum is over the req-body bytes as they
+// arrived, so extracting them has to produce the same octets the
+// sender hashed. A re-encoding would usually match and is exactly
+// what upstream declines to rely on.
+func TestReqBodyBytesMatchesTheEncodedBody(t *testing.T) {
+	msg := ref(t, refTGSReq)
+	got, err := ReqBodyBytes(msg)
+	if err != nil {
+		t.Fatalf("ReqBodyBytes: %v", err)
+	}
+	// The reference file publishes the body on its own, so the
+	// comparison is against upstream's own bytes and not against
+	// this package's encoder.
+	want := ref(t, refKDCReqBody)
+	if !bytes.Equal(got, want) {
+		t.Errorf("\n got %X\nwant %X", got, want)
+	}
+	// And it must be a SEQUENCE, not the context wrapper.
+	if got[0] != 0x30 {
+		t.Errorf("first byte is %02X, want 30", got[0])
+	}
+}
+
+// An AS-REQ has its body at [4] too, so the same extractor serves
+// both.
+func TestReqBodyBytesWorksForAnASReq(t *testing.T) {
+	got, err := ReqBodyBytes(ref(t, refASReq))
+	if err != nil {
+		t.Fatalf("ReqBodyBytes: %v", err)
+	}
+	if !bytes.Equal(got, ref(t, refKDCReqBody)) {
+		t.Error("the AS-REQ body differs from the fixture")
+	}
+}
+
+func TestReqBodyBytesRejectsRubbish(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []byte
+	}{
+		{"empty", nil},
+		{"truncated", []byte{0x6C, 0x7F}},
+		{"indefinite length", []byte{0x6C, 0x80, 0x30, 0x00}},
+		{"no body field", ref(t, refTicket)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ReqBodyBytes(tc.in); err == nil {
+				t.Error("accepted")
+			}
+		})
+	}
+}

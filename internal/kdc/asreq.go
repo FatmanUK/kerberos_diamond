@@ -297,12 +297,8 @@ func minLife(a, b int32) int32 {
 // key used. The two usually agree and need not.
 func (k *KDC) sessionKey(s *asState) error {
 	e := k.sessionEType(s)
-	p, err := crypto.Profile(e)
+	key, err := randomKey(e)
 	if err != nil {
-		return err
-	}
-	key := make([]byte, p.KeyLength)
-	if _, err := rand.Read(key); err != nil {
 		return err
 	}
 	s.session = wire.EncryptionKey{
@@ -310,6 +306,19 @@ func (k *KDC) sessionKey(s *asState) error {
 		KeyValue: key,
 	}
 	return nil
+}
+
+// randomKey makes a fresh key of an enctype's length.
+func randomKey(e crypto.EncType) ([]byte, error) {
+	p, err := crypto.Profile(e)
+	if err != nil {
+		return nil, err
+	}
+	key := make([]byte, p.KeyLength)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
 func (k *KDC) sessionEType(s *asState) crypto.EncType {

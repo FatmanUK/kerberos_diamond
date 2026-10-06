@@ -53,7 +53,7 @@ const (
 )
 
 // ErrNotARequest reports a message that is not one this KDC answers.
-var ErrNotARequest = errors.New("not an AS-REQ")
+var ErrNotARequest = errors.New("not a KDC request")
 
 // realmMaxLife and realmMaxRenewableLife apply the defaults.
 func (k *KDC) realmMaxLife() int32 {
@@ -84,6 +84,21 @@ func (k *KDC) now() time.Time {
 // would make every caller responsible for turning it back into one.
 // Only a failure to produce any reply at all is returned as an error.
 func (k *KDC) Handle(msg []byte) ([]byte, error) {
+	// The application tag is what distinguishes the two requests
+	// -- they are otherwise the same structure -- so the dispatch
+	// is on which decoder accepts the message, not on anything
+	// inside it.
+	if len(msg) > 0 && msg[0] == appTagByte(wire.MsgTGSReq) {
+		return k.handleTGS(msg)
+	}
+	return k.handleAS(msg)
+}
+
+// appTagByte is the identifier octet of a constructed [APPLICATION n]
+// wrapper, for n below 31.
+func appTagByte(n int) byte { return 0x60 | byte(n) }
+
+func (k *KDC) handleAS(msg []byte) ([]byte, error) {
 	req, err := wire.UnmarshalASReq(msg)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotARequest, err)
@@ -93,6 +108,18 @@ func (k *KDC) Handle(msg []byte) ([]byte, error) {
 		return wire.MarshalKRBError(*kerr)
 	}
 	return wire.MarshalASRep(*rep)
+}
+
+func (k *KDC) handleTGS(msg []byte) ([]byte, error) {
+	req, err := wire.UnmarshalTGSReq(msg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotARequest, err)
+	}
+	rep, kerr := k.TGS(msg, req)
+	if kerr != nil {
+		return wire.MarshalKRBError(*kerr)
+	}
+	return wire.MarshalTGSRep(*rep)
 }
 
 // krbError builds a KRB-ERROR for a refusal.

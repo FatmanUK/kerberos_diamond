@@ -38,6 +38,10 @@ that have aged worst in the C:
   HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
   checked, and the default salt is cross-checked against what the C KDC
   actually computes.
+- **The TGS exchange works.** A TGT from the AS path is spent for a service
+  ticket, and the service's own key opens it. The tests start from a ticket
+  this KDC actually issued rather than from one assembled by hand, so a bug
+  in either path cannot hide behind the other.
 - **The vertical slice is closed, and a stock `kinit` proves it.** An
   unmodified `kinit` built from the `kerberos/` submodule obtains a TGT from
   the Go KDC through `kdiamond-proxy`, on both the padata-free and the
@@ -53,13 +57,15 @@ that have aged worst in the C:
   ported from `krb5_dbe_def_search_enctype`, and `SetPassword` for
   provisioning. Tests run against a real Postgres in a scratch schema and
   skip when `KD_TEST_DATABASE_URL` is unset.
-- **`internal/wire` is done** for the AS exchange: AS-REQ, AS-REP, Ticket,
-  EncTicketPart, EncKDCRepPart, KRB-ERROR, PA-ENC-TS-ENC, PA-ETYPE-INFO2 and
-  the MS-KKDCP envelope, with the TCP framing. Every one of them is decoded
-  from upstream's own byte-exact reference output and re-encoded to identical
+- **`internal/wire` covers both exchanges**: AS-REQ, AS-REP, Ticket,
+  EncTicketPart, EncKDCRepPart, KRB-ERROR, PA-ENC-TS-ENC, PA-ETYPE-INFO2,
+  PA-PAC-REQUEST, the MS-KKDCP envelope and the TCP framing, plus AP-REQ, the
+  Authenticator and the TGS messages. Every one of them is decoded from
+  upstream's own byte-exact reference output and re-encoded to identical
   octets.
 - **`internal/kdc` and `internal/transport` are done** for the AS exchange,
-  padata-free and preauth paths both, and both binaries run: `kdiamond serve`
+  padata-free and preauth paths both, and the ordinary TGS exchange beside
+  it. Both binaries run: `kdiamond serve`
   listens on HTTPS speaking MS-KKDCP, and `kdiamond-proxy` carries TLS for a
   client built without a module of its own.
 - Planning is complete and the architecture in §3.2 and §3.3 is settled. §2
@@ -82,9 +88,10 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 **What is next, in the plan file's order:**
 
-1. **The TGS exchange.** The slice above gets a TGT and nothing yet spends
-   it. TGS reuses the whole of `internal/wire` and `internal/crypto` and adds
-   ticket validation, so it is the cheapest large gain available.
+1. **The TGS exchange's differential case and a stock `kvno`.** The exchange
+   is tested in process; it is not yet driven through the golden harness or
+   by a real client, which is how the AS path's last two divergences were
+   found.
 2. **The remaining enctypes**, aes-sha2 (RFC 8009) first, because its
    KDF-HMAC-SHA2 derivation is a genuinely different scheme and will prove
    the enctype dispatch table is a table and not a special case.
@@ -188,6 +195,23 @@ are not "fixed" back by accident.
   fixed password gives a reproducible master key and reproducible stored
   keys. The realm is built at container start rather than baked into the
   image, so each run begins from an identical database with no history.
+**The TGS exchange:**
+
+- **Only the ordinary case is implemented.** A client spends a TGT for a
+  service ticket. Renewal, validation, postdating, forwarding, proxying and
+  user-to-user (`ENC-TKT-IN-SKEY`) are all *refused* rather than ignored:
+  their policy rules are ported so that a request asking for one gets the
+  error upstream would give, but nothing issues such a ticket yet. Neither
+  is S4U2Self or S4U2Proxy, nor cross-realm.
+- **No replay cache.** Upstream does not keep one for a TGS exchange either
+  — "Don't use a replay cache" (`kdc/kdc_util.c:188`) — so the authenticator's
+  clock skew is the whole of the replay window, as it is there. A KDC that
+  added one here would diverge.
+- **Addresses are not checked.** Upstream compares the request's source
+  address against the ticket's address list when it has one
+  (`kdc_util.c:196-202`); the realm fixture sets `noaddresses = true`, so
+  there is nothing to compare, and the check is not written.
+
 **The AS exchange:**
 
 - **No Windows PAC.** A stock MIT KDC puts a signed MS-PAC in every AS
@@ -385,6 +409,13 @@ tests. It is green.
   client. A client built *with* a TLS module reaches the KDC's HTTPS listener
   directly; until one is available, that half is covered only by
   `internal/transport`'s own tests, which do use real TLS.
+- **The TGS exchange** — covered in process. The service ticket is opened
+  with the service's own key and compared against the reply the client can
+  read, and the negative cases are the ones that matter: a tampered body, an
+  authenticator under the wrong session key, one with no checksum at all, a
+  mismatched client name, a stale clock, and a request asking for a flag its
+  TGT does not carry. Each asserts the *specific* protocol error, because
+  they are different codes and a client acts on them differently.
 - **`internal/kdc` and `internal/transport`** — covered. The reply is opened
   with the key a client derives from the password and the ticket with the
   krbtgt's, then the two halves are compared against each other. The preauth

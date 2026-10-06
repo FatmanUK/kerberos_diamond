@@ -32,8 +32,28 @@ const (
 	ErrCodePreauthRequired    int32 = 25
 	ErrCodeServerNoMatch      int32 = 26
 	ErrCodeMustUseUser2User   int32 = 27
-	ErrCodeSkew               int32 = 37
+	ErrCodePathNotAccepted    int32 = 28
+	ErrCodeSvcUnavailable     int32 = 29
 	ErrCodeGeneric            int32 = 60
+)
+
+// The AP errors, which a TGS exchange answers with because the
+// request carries an AP-REQ. Same table, continuing from 31
+// (lib/krb5/error_tables/krb5_err.et).
+const (
+	ErrCodeBadIntegrity int32 = 31
+	ErrCodeTktExpired   int32 = 32
+	ErrCodeTktNYV       int32 = 33
+	ErrCodeRepeat       int32 = 34
+	ErrCodeNotUs        int32 = 35
+	ErrCodeBadMatch     int32 = 36
+	ErrCodeSkew         int32 = 37
+	ErrCodeBadVersion   int32 = 39
+	ErrCodeMsgType      int32 = 40
+	ErrCodeModified     int32 = 41
+	ErrCodeBadKeyVer    int32 = 44
+	ErrCodeNoKey        int32 = 45
+	ErrCodeInappCksum   int32 = 50
 )
 
 // KRBError is the KDC's refusal. It is a message in its own right,

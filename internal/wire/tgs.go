@@ -2,6 +2,7 @@ package wire
 
 import (
 	"encoding/asn1"
+	"fmt"
 )
 
 // TGSReq is a TGS-REQ: a client spending a ticket it already has to
@@ -100,4 +101,103 @@ func UnmarshalTGSRep(b []byte) (TGSRep, error) {
 // not have to look as though it is borrowing the AS encoder.
 func MarshalEncTGSRepPart(e EncKDCRepPart) ([]byte, error) {
 	return MarshalEncASRepPart(e)
+}
+
+// ReqBodyBytes returns the DER of a KDC-REQ's req-body field, exactly
+// as it appeared in the message.
+//
+// This exists because the authenticator's checksum in a TGS-REQ is
+// over those bytes and not over a re-encoding. Upstream reaches into
+// the raw stream for them with fetch_asn1_field(pkt, 1, 4, ...)
+// (kdc/kdc_util.c:246-248, :968-1040) and only falls back to
+// re-encoding the decoded body if the checksum over the raw bytes
+// fails to verify -- which says plainly that it does not trust the
+// two to agree. A KDC that checksummed its own re-encoding would
+// reject every request from a peer whose DER differed in any respect.
+//
+// The returned slice aliases msg; it is not copied.
+func ReqBodyBytes(msg []byte) ([]byte, error) {
+	inner, err := appContent(msg)
+	if err != nil {
+		return nil, err
+	}
+	return ctxField(inner, 4)
+}
+
+// appContent steps past an [APPLICATION n] wrapper and the SEQUENCE
+// inside it, returning the SEQUENCE's content.
+func appContent(msg []byte) ([]byte, error) {
+	body, err := tlvContent(msg)
+	if err != nil {
+		return nil, err
+	}
+	return tlvContent(body)
+}
+
+// ctxField returns the content of the context-tagged element with the
+// given tag number, searching only the top level of a SEQUENCE's
+// content.
+func ctxField(seq []byte, tag int) ([]byte, error) {
+	want := byte(0xA0 | tag)
+	for len(seq) > 0 {
+		id := seq[0]
+		n, hdr, err := tlvLength(seq)
+		if err != nil {
+			return nil, err
+		}
+		if id == want {
+			return seq[hdr : hdr+n], nil
+		}
+		seq = seq[hdr+n:]
+	}
+	return nil, fmt.Errorf("%w: no field [%d] in the body",
+		ErrMalformed, tag)
+}
+
+// tlvContent returns one DER element's content.
+func tlvContent(b []byte) ([]byte, error) {
+	n, hdr, err := tlvLength(b)
+	if err != nil {
+		return nil, err
+	}
+	return b[hdr : hdr+n], nil
+}
+
+// tlvLength reads one DER element's length, returning the content
+// length and the size of the identifier and length octets together.
+//
+// Indefinite length is rejected rather than handled: DER forbids it,
+// and a message using it is not something this KDC should be guessing
+// about.
+func tlvLength(b []byte) (n, hdr int, err error) {
+	if len(b) < 2 {
+		return 0, 0, fmt.Errorf(
+			"%w: %d bytes where a TLV should be",
+			ErrMalformed, len(b))
+	}
+	l := int(b[1])
+	if l < 0x80 {
+		n, hdr = l, 2
+	} else if l == 0x80 {
+		return 0, 0, fmt.Errorf(
+			"%w: indefinite length is not DER",
+			ErrMalformed)
+	} else {
+		count := l & 0x7F
+		if count > 4 || len(b) < 2+count {
+			return 0, 0, fmt.Errorf(
+				"%w: bad length of %d octets",
+				ErrMalformed, count)
+		}
+		for _, c := range b[2 : 2+count] {
+			n = n<<8 | int(c)
+		}
+		hdr = 2 + count
+	}
+	if n < 0 || hdr+n > len(b) {
+		return 0, 0, fmt.Errorf(
+			"%w: element claims %d bytes, %d remain",
+			ErrMalformed, n, len(b)-hdr)
+	}
+	return n, hdr, nil
 }
