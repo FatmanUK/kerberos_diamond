@@ -130,6 +130,7 @@ func provision(
 			store.AttrRequiresPreAuth},
 		{[]string{"krbtgt", Realm}, TgtPassword,
 			TgtKVNO, 0},
+		{ServiceName, ServicePassword, 1, 0},
 	} {
 		p := store.NewPrincipal(Realm, e.components)
 		p.Attributes = e.attrs

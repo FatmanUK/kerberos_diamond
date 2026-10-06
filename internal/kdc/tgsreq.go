@@ -38,6 +38,11 @@ type tgsState struct {
 	serverKVNO  int32
 	serverEType crypto.EncType
 
+	// transitChecked records that the presented ticket's
+	// transited path was evaluated and accepted, which becomes
+	// TKT_FLG_TRANSIT_POLICY_CHECKED on the issued ticket.
+	transitChecked bool
+
 	session wire.EncryptionKey
 	flags   wire.Flags
 
@@ -321,7 +326,40 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 	if code != 0 {
 		return code, status
 	}
-	return checkTGSTimes(opts, s.header, s.now)
+	if code, status := checkTGSTimes(
+		opts, s.header, s.now); code != 0 {
+		return code, status
+	}
+	return k.checkTransited(s)
+}
+
+// checkTransited evaluates the presented ticket's transited path and
+// decides whether the issued ticket may claim the path was checked.
+//
+// Upstream runs kdc_check_transited_list unless the request asks it
+// not to, sets TKT_FLG_TRANSIT_POLICY_CHECKED when it passes, and --
+// with reject_bad_transit, which defaults to *true*
+// (kdc/main.c:305-309) -- refuses the request outright when it does
+// not (do_tgs_req.c:924-947).
+//
+// This implementation can evaluate only the empty path. An empty
+// transited list means the ticket never left this realm, which is
+// trivially acceptable. A non-empty one is cross-realm, which is not
+// implemented, so it is refused rather than waved through: setting
+// the flag on a path nothing examined would be a lie a service relies
+// on.
+func (k *KDC) checkTransited(s *tgsState) (int32, string) {
+	if s.req.Body.Options&wire.OptDisableTransitedCheck != 0 {
+		// The flag stays clear, and with reject_bad_transit's
+		// default that is a refusal -- which is what upstream
+		// does too when asked to skip the check.
+		return wire.ErrCodePolicy, "BAD_TRANSIT"
+	}
+	if len(s.header.Transited.Contents) != 0 {
+		return wire.ErrCodePathNotAccepted, "BAD_TRANSIT"
+	}
+	s.transitChecked = true
+	return 0, ""
 }
 
 // tgsTimes fills in the issued ticket's times, from
@@ -329,6 +367,9 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 func (k *KDC) tgsTimes(s *tgsState) {
 	s.flags = tgsTicketFlags(s.req.Body.Options, s.server,
 		s.header)
+	if s.transitChecked {
+		s.flags |= wire.FlagTransitedPolicyChecked
+	}
 	// The authtime is *preserved from the presented ticket*, not
 	// set to now: it records when the client last authenticated
 	// with a password, which a derived ticket does not change.

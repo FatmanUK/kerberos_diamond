@@ -230,10 +230,19 @@ func TestASExchangeMatchesTheC(t *testing.T) {
 // reportDiffs names every field the two sides disagree about, and
 // prints both renderings when any of them do -- a failure naming one
 // field is useless without the surrounding context.
-func reportDiffs(t *testing.T, oracle, diamond Exchange) {
+func reportDiffs(
+	t *testing.T,
+	oracle, diamond Exchange,
+	exempt ...Exemption,
+) {
 	t.Helper()
 	a, b := Normalize(oracle, Realm), Normalize(diamond, Realm)
-	diffs := Compare(a, b)
+	diffs, waived := Compare(a, b, exempt...)
+	// Every exemption is logged on every run, failing or not, so
+	// the output always says what was not compared.
+	for _, w := range waived {
+		t.Logf("not compared -- %v", w)
+	}
 	for _, d := range diffs {
 		t.Errorf("%v", d)
 	}

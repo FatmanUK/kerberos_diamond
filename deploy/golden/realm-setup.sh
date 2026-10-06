@@ -14,6 +14,8 @@ set -eu
 : "${KRB5_USER:?}"
 : "${KRB5_USER_PASSWORD:?}"
 : "${KRB5_TGT_PASSWORD:?}"
+: "${KRB5_SERVICE:?}"
+: "${KRB5_SERVICE_PASSWORD:?}"
 : "${KRB5_KDC_PORT:?}"
 : "${KRB5_TESTDIR:?}"
 
@@ -116,6 +118,17 @@ kadmin.local -q "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
 # the simple case above.
 kadmin.local -q "addprinc -pw $KRB5_USER_PASSWORD -kvno 1 \
 	+requires_preauth preauth@$KRB5_REALM" >/dev/null
+
+# A service for the TGS exchange to ask for a ticket to. It is created
+# from a password rather than with a random key for the same reason
+# krbtgt is reset below: the harness has to decrypt the ticket the KDC
+# issues, and a key derived from a password is one it can compute.
+#
+# -kvno 1 pins the version, and no +requires_preauth: a service ticket
+# inherits PRE-AUTHENT from the TGT rather than establishing it, so
+# requiring it here would only test the refusal path.
+kadmin.local -q "addprinc -pw $KRB5_SERVICE_PASSWORD -kvno 1 \
+	$KRB5_SERVICE@$KRB5_REALM" >/dev/null
 
 # The krbtgt key kdb5_util create writes is a *random* key
 # (tgt_keysalt_iterate, kadmin/dbutil/kdb5_create.c:441-460) -- seeded

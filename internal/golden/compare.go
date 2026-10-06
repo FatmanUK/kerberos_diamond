@@ -68,11 +68,34 @@ type Diff struct {
 	Field   string
 	Oracle  string
 	Diamond string
+
+	// Reason is set only on a waived difference, and holds the
+	// exemption's justification.
+	Reason string
 }
 
 func (d Diff) String() string {
-	return fmt.Sprintf("%s:\n  oracle:  %s\n  diamond: %s",
+	out := fmt.Sprintf("%s:\n  oracle:  %s\n  diamond: %s",
 		d.Field, d.Oracle, d.Diamond)
+	if d.Reason != "" {
+		out += "\n  waived:  " + d.Reason
+	}
+	return out
+}
+
+// Exemption declares a field the comparison deliberately does not
+// make, and why.
+//
+// It is for a divergence that is a decision rather than a defect --
+// something this implementation does differently on purpose. An
+// exemption is not the same as skipping a field: every one is
+// reported on every run, so the output always says what was not
+// compared and a reader can disagree with the reason. Reaching for
+// one to make a failing diff go away is a misuse, and the Reason
+// field is what makes that obvious when it happens.
+type Exemption struct {
+	Field  string
+	Reason string
 }
 
 // Compare lists every field the two sides disagree about, including
@@ -81,7 +104,29 @@ func (d Diff) String() string {
 // A field missing from one rendering is reported rather than skipped:
 // a comparison that only walked the fields both sides produced would
 // pass a reply that left half of itself out.
-func Compare(oracle, diamond *Fields) []Diff {
+//
+// Exempt differences come back separately rather than being dropped,
+// so a caller cannot report the diffs without the exemptions in hand.
+func Compare(
+	oracle, diamond *Fields,
+	exempt ...Exemption,
+) (diffs []Diff, waived []Diff) {
+	skip := map[string]string{}
+	for _, e := range exempt {
+		skip[e.Field] = e.Reason
+	}
+	for _, d := range compareAll(oracle, diamond) {
+		if reason, ok := skip[d.Field]; ok {
+			d.Reason = reason
+			waived = append(waived, d)
+			continue
+		}
+		diffs = append(diffs, d)
+	}
+	return diffs, waived
+}
+
+func compareAll(oracle, diamond *Fields) []Diff {
 	names := map[string]bool{}
 	for _, n := range oracle.order {
 		names[n] = true
@@ -106,7 +151,8 @@ func Compare(oracle, diamond *Fields) []Diff {
 			b = "<no such field>"
 		}
 		if a != b {
-			diffs = append(diffs, Diff{n, a, b})
+			diffs = append(diffs,
+				Diff{Field: n, Oracle: a, Diamond: b})
 		}
 	}
 	return diffs

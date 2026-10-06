@@ -40,11 +40,22 @@ const (
 	TgtPassword = "tgtpassword"
 	TgtKVNO     = 2
 
+	// ServiceName and ServicePassword are the principal a TGS
+	// exchange asks for a ticket to. Its key comes from a
+	// password for the same reason krbtgt's does: the harness has
+	// to decrypt the ticket the KDC issues, and a key derived
+	// from a password is one it can compute.
+	ServicePassword = "servicepassword"
+
 	// PreauthName demands pre-authentication; UserName does not.
 	// Keeping both means the padata-free single round trip and
 	// the PA-ENC-TIMESTAMP path can be exercised separately.
 	PreauthName = "preauth"
 )
+
+// ServiceName is the service principal's components. It is a var
+// rather than a const because a principal name is a list.
+var ServiceName = []string{"host", "service.kdiamond.test"}
 
 // Oracle is a running C KDC.
 type Oracle struct {

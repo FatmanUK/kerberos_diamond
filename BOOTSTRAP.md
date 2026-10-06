@@ -38,10 +38,12 @@ that have aged worst in the C:
   HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
   checked, and the default salt is cross-checked against what the C KDC
   actually computes.
-- **The TGS exchange works.** A TGT from the AS path is spent for a service
-  ticket, and the service's own key opens it. The tests start from a ticket
-  this KDC actually issued rather than from one assembled by hand, so a bug
-  in either path cannot hide behind the other.
+- **The TGS exchange works, and a stock `kvno` proves it.** An unmodified
+  `kinit` gets a TGT and an unmodified `kvno` spends it for a service ticket,
+  both against the Go KDC through `kdiamond-proxy`. The golden harness also
+  presents *one* TGT to both implementations in the same encoded TGS-REQ —
+  they share the fixture's krbtgt key, so the same ticket is valid at either —
+  and compares the two replies field for field with both halves decrypted.
 - **The vertical slice is closed, and a stock `kinit` proves it.** An
   unmodified `kinit` built from the `kerberos/` submodule obtains a TGT from
   the Go KDC through `kdiamond-proxy`, on both the padata-free and the
@@ -88,13 +90,15 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 **What is next, in the plan file's order:**
 
-1. **The TGS exchange's differential case and a stock `kvno`.** The exchange
-   is tested in process; it is not yet driven through the golden harness or
-   by a real client, which is how the AS path's last two divergences were
-   found.
-2. **The remaining enctypes**, aes-sha2 (RFC 8009) first, because its
+1. **The remaining enctypes**, aes-sha2 (RFC 8009) first, because its
    KDF-HMAC-SHA2 derivation is a genuinely different scheme and will prove
    the enctype dispatch table is a table and not a special case.
+2. **A `kadmin` equivalent**, as a `cmd/kdiamond` subcommand rather than a
+   separate protocol. Provisioning principals through SQL is fine until
+   something external needs to do it, and the golden fixture already wants it.
+3. **The TGS cases nothing issues yet** — renewal, validation, postdating,
+   forwarding, proxying, user-to-user — each of which has its refusal path
+   ported already, so the next increment is the issuing half.
 
 ## 3. Project State
 
@@ -211,6 +215,14 @@ are not "fixed" back by accident.
   address against the ticket's address list when it has one
   (`kdc_util.c:196-202`); the realm fixture sets `noaddresses = true`, so
   there is nothing to compare, and the check is not written.
+- **Only an empty transited path is accepted.** Upstream runs
+  `kdc_check_transited_list` and sets `TKT_FLG_TRANSIT_POLICY_CHECKED` when it
+  passes, refusing the request when it does not — `reject_bad_transit`
+  defaults to *true* (`kdc/main.c:305-309`). This implementation can evaluate
+  only the empty path, which means the ticket never left this realm. A
+  non-empty one is cross-realm and is refused rather than waved through:
+  setting the flag on a path nothing examined would be a lie a service relies
+  on, and `KDC_OPT_DISABLE_TRANSITED_CHECK` is refused for the same reason.
 
 **The AS exchange:**
 
@@ -223,10 +235,15 @@ are not "fixed" back by accident.
   — so the comparison covers the whole reply with no skipped fields, and the
   gap is recorded here instead of hidden in an exemption. A Windows client
   expecting a PAC will not be satisfied by this KDC yet.
-- **No FAST.** Upstream's hint list leads with an empty `PA-FX-FAST` to
-  advertise it (`kdc/kdc_preauth.c:380`). This does not advertise what it
-  cannot do: claiming FAST would invite a client to negotiate something that
-  then fails.
+- **No FAST, and it is not advertised.** Upstream announces it twice: an
+  empty `PA-FX-FAST` leads the preauth hint list (`kdc/kdc_preauth.c:380`),
+  and another is added beside the RFC 6806 reply checksum unconditionally
+  (`kdc/kdc_util.c:1800-1802`), which is how a client comes to write
+  `fast_avail: yes` into its credential cache. This KDC does neither. A
+  client told FAST were available and then refused it would be a broken
+  deployment; one told it is unavailable simply does not use it, which is what
+  every passing end-to-end case here does. It is the golden harness's one
+  **declared exemption**, reported on every run rather than skipped.
 - **No authorization data, and `last-req` is upstream's stub.**
   `fetch_last_req_info` returns one constant `{KRB5_LRQ_NONE, 0}` entry
   (`kdc/kdc_util.c:677-688`); matching the stub is deliberate, because
@@ -409,13 +426,19 @@ tests. It is green.
   client. A client built *with* a TLS module reaches the KDC's HTTPS listener
   directly; until one is available, that half is covered only by
   `internal/transport`'s own tests, which do use real TLS.
-- **The TGS exchange** — covered in process. The service ticket is opened
+- **The TGS exchange** — covered in process *and* differentially. The
+  service ticket is opened
   with the service's own key and compared against the reply the client can
   read, and the negative cases are the ones that matter: a tampered body, an
   authenticator under the wrong session key, one with no checksum at all, a
   mismatched client name, a stale clock, and a request asking for a flag its
   TGT does not carry. Each asserts the *specific* protocol error, because
   they are different codes and a client acts on them differently.
+- **The harness has one declared exemption**, for the FAST advertisement
+  above. An exemption is not a skipped field: `Compare` returns waived
+  differences separately from real ones and the test logs every one on every
+  run, so the output always states what was not compared and a reader can
+  disagree with the reason.
 - **`internal/kdc` and `internal/transport`** — covered. The reply is opened
   with the key a client derives from the password and the ticket with the
   krbtgt's, then the two halves are compared against each other. The preauth
