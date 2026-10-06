@@ -34,6 +34,16 @@ func deriveSP800108(
 	base, label []byte,
 	outLen int,
 ) ([]byte, error) {
+	return sp800108(p, base, label, nil, outLen)
+}
+
+// sp800108 is the same with a context, which only the pseudo-random
+// function supplies.
+func sp800108(
+	p *EncProfile,
+	base, label, context []byte,
+	outLen int,
+) ([]byte, error) {
 	m := hmac.New(p.newHash, base)
 	if outLen > m.Size() {
 		return nil, fmt.Errorf(
@@ -47,6 +57,7 @@ func deriveSP800108(
 	m.Write(counter[:])
 	m.Write(label)
 	m.Write([]byte{0})
+	m.Write(context)
 	m.Write(bits[:])
 	return m.Sum(nil)[:outLen], nil
 }

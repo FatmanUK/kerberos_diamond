@@ -92,6 +92,12 @@ type EncProfile struct {
 	// which a supplied count is refused.
 	DefaultIterations uint32
 
+	// PRFLength is how many bytes the pseudo-random function
+	// produces, which the enctype fixes and a caller cannot
+	// choose. It is the cipher's block size for the RFC 3962
+	// types and the full hash size for the aes-sha2 pair.
+	PRFLength int
+
 	// newHash is the hash every HMAC and the PBKDF2 use.
 	newHash func() hash.Hash
 
@@ -121,6 +127,7 @@ type EncProfile struct {
 	derive deriveFunc
 	seal   sealFunc
 	open   openFunc
+	prf    prfFunc
 }
 
 // The three per-family operations.
@@ -144,6 +151,11 @@ type (
 		p *EncProfile,
 		ke, ki, ct []byte,
 	) ([]byte, error)
+
+	prfFunc func(
+		p *EncProfile,
+		key, in []byte,
+	) ([]byte, error)
 )
 
 // profiles is the dispatch table, searched linearly as upstream's is
@@ -163,12 +175,14 @@ var profiles = []EncProfile{
 		TrailerLength:      24,
 		RequiredCksum:      HMACSHA384192AES256,
 		DefaultIterations:  32768,
+		PRFLength:          48,
 		newHash:            sha512.New384,
 		integrityKeyLength: 24,
 		s2kPepper:          "aes256-cts-hmac-sha384-192",
 		derive:             deriveSP800108,
 		seal:               sealETM,
 		open:               openETM,
+		prf:                prfSP800108,
 	},
 	{
 		EncType:            AES128CTSHMACSHA256128,
@@ -180,12 +194,14 @@ var profiles = []EncProfile{
 		TrailerLength:      16,
 		RequiredCksum:      HMACSHA256128AES128,
 		DefaultIterations:  32768,
+		PRFLength:          32,
 		newHash:            sha256.New,
 		integrityKeyLength: 16,
 		s2kPepper:          "aes128-cts-hmac-sha256-128",
 		derive:             deriveSP800108,
 		seal:               sealETM,
 		open:               openETM,
+		prf:                prfSP800108,
 	},
 	{
 		EncType:            AES256CTSHMACSHA196,
@@ -197,11 +213,13 @@ var profiles = []EncProfile{
 		TrailerLength:      12,
 		RequiredCksum:      HMACSHA196AES256,
 		DefaultIterations:  4096,
+		PRFLength:          16,
 		newHash:            sha1.New,
 		integrityKeyLength: 32,
 		derive:             deriveDK,
 		seal:               sealDK,
 		open:               openDK,
+		prf:                prfDK,
 	},
 	{
 		EncType:            AES128CTSHMACSHA196,
@@ -213,11 +231,13 @@ var profiles = []EncProfile{
 		TrailerLength:      12,
 		RequiredCksum:      HMACSHA196AES128,
 		DefaultIterations:  4096,
+		PRFLength:          16,
 		newHash:            sha1.New,
 		integrityKeyLength: 16,
 		derive:             deriveDK,
 		seal:               sealDK,
 		open:               openDK,
+		prf:                prfDK,
 	},
 }
 

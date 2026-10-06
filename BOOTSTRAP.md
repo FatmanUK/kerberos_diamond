@@ -33,6 +33,12 @@ that have aged worst in the C:
   malformed frame, a padata-free single round trip, the PA-ENC-TIMESTAMP path,
   TCP-only transport, a TGT in the credential cache, and a wrong password
   being refused as a wrong password.
+- **`internal/crypto` also has the pseudo-random function**, `PRF+` and
+  `KRB-FX-CF2` — the primitives FAST combines keys with, so that an armor key
+  belongs to neither party alone. All three are anchored: upstream asserts its
+  own PRF vectors (`t_prf.c`, eight cases covering all four enctypes) and ships
+  CF2's as a fixed expected file, so unlike the AES-CTS gap these are a real
+  anchor and not a round trip.
 - **`internal/crypto` covers four enctypes in two families**: RFC 3962's
   aes256- and aes128-cts-hmac-sha1-96 and RFC 8009's aes-sha2 pair. Every
   vector upstream publishes for all four is checked, and the default salt is
@@ -142,7 +148,11 @@ Everything the plan file listed is done, so this list is now the live one.
 2. ~~**`[capaths]` and the alternate-TGS search.**~~ Done. Cross-realm is
    complete except for the host-based referral below.
 3. **FAST** (RFC 6113), which would also let the KDC stop declining to
-   advertise it — currently the harness's one declared exemption.
+   advertise it — currently the harness's one declared exemption. The
+   primitives are in: `internal/crypto` has the enctype pseudo-random
+   function, `PRF+` and `KRB-FX-CF2`, all anchored to upstream's published
+   vectors. What is left is the wire types, the armored exchange and the
+   encrypted-challenge factor.
 4. **The host-based referral**, `find_referral_tgs` (`do_tgs_req.c:487-523`):
    a client asking for `host/www.example.com` in the wrong realm is told
    which realm to ask instead, from a host-to-realm map. It needs a
@@ -602,6 +612,14 @@ tests. It is green.
 - **`internal/config`** — covered. Defaults, empty-is-unset, whitespace-is-
   unset, the duration parse, and that a bad environment reports *every*
   missing variable rather than the first.
+- **The pseudo-random function, `PRF+` and `KRB-FX-CF2`** — covered against
+  upstream's own asserted vectors: all eight of `t_prf.c`'s, and four of
+  `t_cf2.in`'s six (the other two are enctypes this project does not
+  implement). One property is asserted rather than taken from a vector,
+  because it reads as a bug until it is written down: CF2 is an XOR of two
+  `PRF+` values, so with *equal* peppers it is symmetric in its two keys and
+  swapping them changes nothing. Every use in RFC 6113 passes two different
+  peppers, which is what makes the order significant.
 - **`internal/crypto`** — covered, and anchored rather than
   self-consistent. For RFC 3962: every n-fold vector from `t_nfold.c`, every
   appendix B string-to-key vector from `t_str2key.c`, all six Kc/Ke/Ki
