@@ -34,8 +34,23 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `kdiamond %s
 
 usage:
-  kdiamond serve        run the KDC
-  kdiamond version      print the version and exit
+  kdiamond serve                  run the KDC
+  kdiamond version                print the version and exit
+
+principal administration, standing in for kadmin:
+  kdiamond addprinc -pw PW [-kvno N] [-maxlife D]
+                    [-maxrenewlife D] [-attr SPEC] PRINC
+  kdiamond modprinc [-maxlife D] [-maxrenewlife D]
+                    [-attr SPEC] PRINC
+  kdiamond cpw -pw PW PRINC       change a password, bumping the kvno
+  kdiamond delprinc PRINC         remove a principal
+  kdiamond getprinc PRINC         print what the KDC knows
+  kdiamond listprincs             print every principal's name
+
+An attribute SPEC is kadmin's, sign included: +requires_preauth,
+-allow_tix, +forwardable and so on. Most are inverted -- +forwardable
+*clears* DISALLOW_FORWARDABLE -- so read them as what the principal is
+permitted, not as which bit is set.
 `, version)
 }
 
@@ -52,12 +67,25 @@ func run(args []string) error {
 		return nil
 	}
 
+	rest := fs.Args()
 	switch cmd := fs.Arg(0); cmd {
 	case "serve":
 		return serve()
 	case "version":
 		fmt.Println(version)
 		return nil
+	case "addprinc":
+		return addprinc(rest[1:])
+	case "modprinc":
+		return modprinc(rest[1:])
+	case "cpw":
+		return cpw(rest[1:])
+	case "delprinc":
+		return delprinc(rest[1:])
+	case "getprinc":
+		return getprinc(rest[1:])
+	case "listprincs":
+		return listprincs(rest[1:])
 	case "":
 		usage()
 		return errors.New("no subcommand given")

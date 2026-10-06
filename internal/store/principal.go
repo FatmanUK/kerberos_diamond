@@ -238,3 +238,31 @@ func NewPrincipal(
 		MaxRenewableLife: DefaultMaxRenewableLife,
 	}
 }
+
+// List returns every principal's name, sorted.
+//
+// Names only: a listing that loaded each principal's keys would read
+// the whole database to print a column of strings, and the one caller
+// that wants the rest asks for it by name afterwards.
+func (s *Store) List(ctx context.Context) ([]string, error) {
+	var names []string
+	err := s.db.WithContext(ctx).Model(&Principal{}).
+		Order("name").Pluck("name", &names).Error
+	if err != nil {
+		return nil, fmt.Errorf("store: list: %w", err)
+	}
+	return names, nil
+}
+
+// HighestKVNO is the greatest key version a principal holds, or 0
+// when it holds no keys.
+//
+// It reads the first key because Lookup orders them by kvno
+// descending, which is the same reason SelectKey can resolve
+// "highest" from element zero (current_kvno, kdc/kdc_util.h:538-541).
+func (p *Principal) HighestKVNO() int32 {
+	if len(p.Keys) == 0 {
+		return 0
+	}
+	return p.Keys[0].KVNO
+}

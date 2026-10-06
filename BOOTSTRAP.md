@@ -38,6 +38,12 @@ that have aged worst in the C:
   HMAC-SHA1-96 integrity tag. Every vector upstream publishes for those is
   checked, and the default salt is cross-checked against what the C KDC
   actually computes.
+- **A realm can be provisioned with `kdiamond` alone**, and a stock `kinit`
+  then uses it. The administrative commands are exercised as a *binary* with
+  arguments rather than by calling the functions behind them, so a flag that
+  was never registered or a subcommand missing from the dispatch would fail
+  the test. One case checks that `-maxlife 2h` beats a client's `-l 8h` —
+  policy has to reach the KDC's decisions, not just the database.
 - **Renewal works, and a stock `kinit -R` proves it.** A renewable TGT is
   renewed through the shim and the client's own `klist` shows the renew-until
   unmoved. The golden harness compares a renewal field for field as well,
@@ -99,11 +105,11 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 1. **The remaining enctypes**, aes-sha2 (RFC 8009) first, because its
    KDF-HMAC-SHA2 derivation is a genuinely different scheme and will prove
    the enctype dispatch table is a table and not a special case.
-2. **A `kadmin` equivalent**, as a `cmd/kdiamond` subcommand rather than a
-   separate protocol. Provisioning principals through SQL is fine until
-   something external needs to do it, and the golden fixture already wants it.
-3. **The TGS cases nothing issues yet** — forwarding, proxying and
+2. **The TGS cases nothing issues yet** — forwarding, proxying and
    user-to-user — each of which has its refusal path ported already.
+3. **Argon2id**, per §3.3: new keys written with it, legacy string-to-key
+   read but never written. A deliberate divergence, so it needs its own
+   golden exemption rather than a comparison.
 
 ## 3. Project State
 
@@ -264,6 +270,29 @@ are not "fixed" back by accident.
   (`kdc/kdc_util.c:677-688`); matching the stub is deliberate, because
   implementing last-req properly would diverge from every C transcript
   immediately.
+
+**Administration:**
+
+- **No kadmin protocol; `kdiamond` subcommands instead.** `addprinc`,
+  `modprinc`, `cpw`, `delprinc`, `getprinc` and `listprincs`, with kadmin's
+  own attribute specifiers. kadmin exists because a flat-file database can
+  only be edited by a process on the same host; a relational one can be
+  edited by anything that can reach it, so a second protocol earns its place
+  only once something external needs to provision principals. The vocabulary
+  is kadmin's deliberately — an operator should not have to learn a second
+  set of words for the same job.
+- **The attribute specifiers are mostly inverted, and that is upstream's
+  doing.** The stored bits are nearly all `DISALLOW_` bits, so
+  `+forwardable` *clears* `DISALLOW_FORWARDABLE`
+  (`lib/kadm5/str_conv.c:50-94`). Eight of the fourteen attributes behave
+  that way, which means reading `+` as "set the named bit" gets the opposite
+  of what was asked. The table is ported with its aliases, and `getprinc`
+  prints the *stored* names rather than the inverted spellings, as kadmin
+  does.
+- **Attributes are a repeatable `-attr` flag, not bare arguments.** kadmin
+  takes them positionally; Go's flag package stops at the first non-flag
+  argument, so a bare `+requires_preauth` before the principal name would
+  swallow everything after it. Naming the flag is the honest fix.
 
 **The principal store:**
 

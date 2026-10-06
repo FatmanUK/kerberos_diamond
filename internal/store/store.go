@@ -70,6 +70,13 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+// MasterKey is the key stored key material is sealed with.
+//
+// It is exposed because provisioning happens outside the KDC -- the
+// administrative subcommands derive keys and have to seal them with
+// the same key the KDC will unseal them with.
+func (s *Store) MasterKey() MasterKey { return s.mkey }
+
 // Close releases the connection pool.
 func (s *Store) Close() error {
 	db, err := s.db.DB()

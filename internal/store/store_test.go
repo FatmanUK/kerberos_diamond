@@ -410,3 +410,77 @@ func TestWrongMasterKeyVersionIsItsOwnError(t *testing.T) {
 			"complaint", err)
 	}
 }
+
+// List returns names in order, which is what a listing wants and what
+// the one caller relies on to be stable between runs.
+func TestList(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	for _, n := range []string{"zeta", "alpha", "mu"} {
+		principal(t, s, n+"@"+testRealm, "pw-"+n)
+	}
+	names, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	want := []string{
+		"alpha@" + testRealm,
+		"mu@" + testRealm,
+		"zeta@" + testRealm,
+	}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("got %v, want %v", names, want)
+	}
+}
+
+// HighestKVNO reads the first key, which is only the highest because
+// Lookup orders them descending -- the same reason SelectKey can
+// resolve "highest" from element zero.
+func TestHighestKVNO(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	name := "versioned@" + testRealm
+
+	p := store2Principal(t, s, name, "old", 1)
+	if err := p.SetPassword(s.mkey, "new", 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Lookup(ctx, name)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if got.HighestKVNO() != 4 {
+		t.Errorf("highest kvno is %d, want 4",
+			got.HighestKVNO())
+	}
+	empty := &Principal{}
+	if empty.HighestKVNO() != 0 {
+		t.Error("a keyless principal claims a key version")
+	}
+}
+
+// store2Principal builds and saves a principal at a given key
+// version.
+func store2Principal(
+	t *testing.T,
+	s *Store,
+	name, password string,
+	kvno int32,
+) *Principal {
+	t.Helper()
+	components, realm, err := ParseName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPrincipal(realm, components)
+	if err := p.SetPassword(s.mkey, password, kvno); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
