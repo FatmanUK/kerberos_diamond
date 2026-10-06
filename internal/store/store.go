@@ -13,6 +13,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -84,4 +85,21 @@ func (s *Store) Close() error {
 		return err
 	}
 	return db.Close()
+}
+
+// Ping reports whether the database is reachable.
+//
+// It exists for the health endpoint, and it deliberately asks the
+// *database* rather than inspecting a cached flag. A KDC can only
+// answer requests it can look principals up for, so a readiness check
+// that reported on anything else would be a check on the wrong thing.
+func (s *Store) Ping(ctx context.Context) error {
+	db, err := s.db.DB()
+	if err != nil {
+		return fmt.Errorf("store: ping: %w", err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("store: ping: %w", err)
+	}
+	return nil
 }

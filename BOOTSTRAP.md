@@ -103,9 +103,11 @@ attempt the TGS exchange, kadmin, FAST or cross-realm.
 
 1. **The TGS cases nothing issues yet** — forwarding, proxying and
    user-to-user — each of which has its refusal path ported already.
-2. **Crash-only and high availability**, the 12-factor work this project
-   exists for. It is testable now: there is a KDC worth restarting
-   mid-exchange.
+2. **Beyond the plan.** Everything the plan file listed is done. The obvious
+   next things, none of them planned yet: cross-realm, FAST, the Windows PAC,
+   S4U2Self and S4U2Proxy, a `kadmin` protocol for provisioning from off-host,
+   and a client built with a TLS module so the HTTPS leg is covered end to end
+   without the shim.
 
 ## 3. Project State
 
@@ -289,6 +291,31 @@ are not "fixed" back by accident.
   (`kdc/kdc_util.c:677-688`); matching the stub is deliberate, because
   implementing last-req properly would diverge from every C transcript
   immediately.
+
+**Crash-only and high availability:**
+
+- **The KDC holds nothing a restart would have to rebuild**, and that is
+  measured rather than asserted. Every principal and key is in Postgres, the
+  master key is derived from the environment, and an exchange carries no state
+  past its reply — no replay cache, no session table, nothing written. So
+  several KDCs can serve one realm behind one address, and `make golden`
+  issues a TGT at one and spends it at another sharing nothing but the
+  database.
+- **There is one stopping path and it is abrupt.** A signal calls
+  `Server.Close`, not `Shutdown`: nothing needs draining, so a connection cut
+  mid-flight costs a client one retry and costs the KDC nothing. Draining
+  would be slower without being safer, and it would add a second stopping
+  path that a crash never exercises.
+- **`/healthz` is *readiness*, not liveness.** A KDC whose database is away
+  reports 503 so a load balancer stops sending it traffic, and stays alive so
+  nothing restarts it — restarting would not help, because the fault is
+  elsewhere and the process recovers on its own. `make golden` proves that
+  recovery: a dedicated Postgres is stopped under a running KDC, the KDC
+  refuses cleanly with a KRB-ERROR and reports 503, the database comes back,
+  and the *same process* answers again with no reconnection logic of its own.
+- **A database it cannot reach is answered, not ignored.** The refusal is a
+  KRB-ERROR with the generic code: a client that got nothing would retry
+  forever, and "our database is down" is not something to tell a client.
 
 **Administration:**
 
@@ -486,6 +513,12 @@ tests. It is green.
     upstream's test program does not cover it — so it is round-tripped against
     itself and its shape asserted by hand. It is checked for real by the shim
     talking to a stock client.
+- **Crash-only and HA** — covered by behaviour, not by inspection. A TGT
+  issued at one KDC is spent at another sharing only the database; a
+  dedicated Postgres is stopped and restarted under a running KDC and the same
+  process recovers; readiness reports 503 while the database is away and 200
+  when it returns; and the probe and the KKDCP path are separate routes, so a
+  load balancer needs no Kerberos message and a client needs no probe path.
 - **The master key's two derivations** — covered. Each is reproducible on its
   own, the two disagree with each other, the realm separates them, material
   sealed under one does not open under the other, and the legacy one is

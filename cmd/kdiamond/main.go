@@ -124,28 +124,35 @@ func serve() error {
 // There is no cleartext listener and no raw-TCP listener, so "TLS
 // only" holds literally: a client either speaks KKDCP over HTTPS or
 // goes through kdiamond-proxy.
+//
+// The process holds nothing that a restart would have to rebuild.
+// Every principal and key is in Postgres; the master key is derived
+// from the environment; an exchange carries no state past its reply.
+// So several of these can serve one realm behind one address, and any
+// of them can be killed at any moment -- which is the whole of this
+// project's crash-only claim and what the HA tests in internal/golden
+// check.
 func listen(c *config.Config, s *store.Store) error {
 	ctx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	k := &kdc.KDC{
-		Store:     s,
-		Realm:     c.Realm,
-		ClockSkew: c.ClockSkew,
-	}
-	mux := http.NewServeMux()
-	mux.Handle("/", &transport.Handler{
-		Path:   c.ProxyPath,
-		Handle: k.Handle,
-		Log:    log,
-	})
 	srv := &http.Server{
 		Addr:              c.ListenAddr,
-		Handler:           mux,
+		Handler:           routes(c, s, log),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// Close, not Shutdown: a signal ends the process abruptly and
+	// that is the only stopping path there is.
+	//
+	// Nothing needs draining. An AS or TGS exchange is a single
+	// request with no state carried past the reply -- no replay
+	// cache, no session table, nothing written to the database --
+	// so a connection cut mid-flight costs the client one retry
+	// and costs this KDC nothing. Draining would make stopping
+	// slower without making it safer, and it would create a
+	// second stopping path that a crash does not exercise.
 	go func() {
 		<-ctx.Done()
 		srv.Close()
@@ -158,4 +165,29 @@ func listen(c *config.Config, s *store.Store) error {
 		return nil
 	}
 	return err
+}
+
+// routes are the two the KDC serves: the readiness probe a load
+// balancer needs, and everything else to the KKDCP handler.
+func routes(
+	c *config.Config,
+	s *store.Store,
+	log *slog.Logger,
+) http.Handler {
+	k := &kdc.KDC{
+		Store:     s,
+		Realm:     c.Realm,
+		ClockSkew: c.ClockSkew,
+	}
+	mux := http.NewServeMux()
+	mux.Handle(transport.HealthPath, &transport.Health{
+		Check: s.Ping,
+		Log:   log,
+	})
+	mux.Handle("/", &transport.Handler{
+		Path:   c.ProxyPath,
+		Handle: k.Handle,
+		Log:    log,
+	})
+	return mux
 }

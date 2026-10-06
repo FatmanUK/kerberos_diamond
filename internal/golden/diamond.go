@@ -61,6 +61,16 @@ func StartDiamond(
 	if base == "" {
 		return nil, ErrNoDatabase
 	}
+	return StartDiamondAt(ctx, base, schema, now)
+}
+
+// StartDiamondAt is StartDiamond against a named database, for a test
+// that brings its own Postgres rather than using the shared one.
+func StartDiamondAt(
+	ctx context.Context,
+	base, schema string,
+	now func() time.Time,
+) (*Diamond, error) {
 	mkey, err := store.DeriveMasterKey(
 		Realm, MasterPass, store.DefaultMasterKeyType)
 	if err != nil {
@@ -172,4 +182,34 @@ func searchPath(base, schema string) string {
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// OpenDiamond builds a Go KDC over a schema that already exists.
+//
+// It differs from StartDiamond in exactly one way: it does not drop
+// and recreate the schema, so a second KDC can be pointed at the same
+// realm as the first. That is what makes the high-availability claim
+// measurable -- two KDCs sharing a database and nothing else.
+func OpenDiamond(
+	base, schema string,
+	now func() time.Time,
+) (*Diamond, error) {
+	mkey, err := store.DeriveMasterKey(
+		Realm, MasterPass, store.DefaultMasterKeyType)
+	if err != nil {
+		return nil, err
+	}
+	s, err := store.Open(searchPath(base, schema), mkey)
+	if err != nil {
+		return nil, err
+	}
+	d := &Diamond{Store: s}
+	d.closers = append(d.closers, func() { s.Close() })
+	d.KDC = &kdc.KDC{
+		Store:     s,
+		Realm:     Realm,
+		ClockSkew: 5 * time.Minute,
+		Now:       now,
+	}
+	return d, nil
 }

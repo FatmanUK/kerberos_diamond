@@ -2,6 +2,7 @@ package golden
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -435,4 +436,53 @@ func etypeInfo2(
 	}
 	t.Fatalf("%s: no PA-ETYPE-INFO2 in the refusal", side)
 	return wire.ETypeInfo2Entry{}
+}
+
+// haveDatabaseURL skips the calling test when no test database is
+// configured, and says so in the skip rather than in a nil deref
+// later.
+func haveDatabaseURL(t *testing.T) bool {
+	t.Helper()
+	if os.Getenv(TestDatabaseURL) == "" {
+		t.Skip(TestDatabaseURL + " is unset")
+		return false
+	}
+	return true
+}
+
+// secondDiamond opens a second KDC over a schema the first already
+// built, which is the arrangement a pair behind one address has.
+func secondDiamond(
+	t *testing.T,
+	schema string,
+	now func() time.Time,
+) *Diamond {
+	t.Helper()
+	if !haveDatabaseURL(t) {
+		return nil
+	}
+	d, err := OpenDiamond(
+		os.Getenv(TestDatabaseURL), schema, now)
+	if err != nil {
+		t.Fatalf("opening a second KDC: %v", err)
+	}
+	t.Cleanup(d.Close)
+	return d
+}
+
+// diamondAt opens a KDC against a database given by URL rather than
+// by the environment, for the one test that brings its own Postgres.
+func diamondAt(
+	t *testing.T,
+	base, schema string,
+	now func() time.Time,
+) *Diamond {
+	t.Helper()
+	d, err := StartDiamondAt(
+		context.Background(), base, schema, now)
+	if err != nil {
+		t.Fatalf("opening a KDC at %s: %v", schema, err)
+	}
+	t.Cleanup(d.Close)
+	return d
 }

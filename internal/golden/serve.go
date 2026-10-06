@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -29,10 +28,38 @@ type Served struct {
 	// ShimPort is the plain Kerberos TCP port a client dials.
 	ShimPort int
 
-	// URL is the KDC's KKDCP endpoint, for the record.
-	URL string
+	// URL is the KDC's KKDCP endpoint, and Base is the origin it
+	// sits on, which is what a readiness probe is built from.
+	URL  string
+	Base string
+
+	// pool trusts the server's generated certificate, so a test
+	// can probe it without skipping verification.
+	pool *x509.CertPool
 
 	stop func()
+}
+
+// Probe asks the KDC's readiness endpoint and returns the status
+// code.
+func (s *Served) Probe(ctx context.Context) (int, error) {
+	req, err := http.NewRequestWithContext(ctx,
+		http.MethodGet, s.Base+transport.HealthPath, nil)
+	if err != nil {
+		return 0, err
+	}
+	c := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: s.pool},
+		},
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
 }
 
 // Close shuts both halves down.
@@ -55,10 +82,11 @@ func Serve(ctx context.Context, d *Diamond) (*Served, error) {
 	if err != nil {
 		return nil, err
 	}
-	srv, url, err := serveKDC(d, cert)
+	srv, base, err := serveKDC(d, cert)
 	if err != nil {
 		return nil, err
 	}
+	url := base + "/" + ProxyPath
 	shimLn, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		srv.Close()
@@ -70,6 +98,8 @@ func Serve(ctx context.Context, d *Diamond) (*Served, error) {
 	return &Served{
 		ShimPort: shimLn.Addr().(*net.TCPAddr).Port,
 		URL:      url,
+		Base:     base,
+		pool:     pool,
 		stop: func() {
 			cancel()
 			shimLn.Close()
@@ -89,20 +119,24 @@ func serveKDC(
 	if err != nil {
 		return nil, "", err
 	}
+	mux := http.NewServeMux()
+	mux.Handle(transport.HealthPath, &transport.Health{
+		Check: d.Store.Ping,
+	})
+	mux.Handle("/", &transport.Handler{
+		Path:   ProxyPath,
+		Handle: d.KDC.Handle,
+	})
 	srv := &http.Server{
-		Handler: &transport.Handler{
-			Path:   ProxyPath,
-			Handle: d.KDC.Handle,
-		},
+		Handler: mux,
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{cert},
 		},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go srv.ServeTLS(ln, "", "")
-	url := fmt.Sprintf("https://%s/%s",
-		ln.Addr().String(), ProxyPath)
-	return srv, url, nil
+	base := "https://" + ln.Addr().String()
+	return srv, base, nil
 }
 
 // serveShim runs the shim, which binds every interface so that a
