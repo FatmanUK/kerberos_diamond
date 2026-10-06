@@ -154,7 +154,30 @@ func provision(
 			return err
 		}
 	}
-	return nil
+	return provisionTrust(ctx, s, mkey)
+}
+
+// provisionTrust adds the inter-realm key, which is the whole of a
+// cross-realm trust: this KDC can verify a ticket-granting ticket the
+// foreign realm issued for a service here exactly because it holds
+// the key for krbtgt/<here>@<there>.
+//
+// Note the realm: the principal's *name* says this realm and its
+// *realm* says the foreign one, so its default salt is the foreign
+// realm's. That is what makes the key identical to the one in the
+// foreign realm's own database, derived from the same password there.
+func provisionTrust(
+	ctx context.Context,
+	s *store.Store,
+	mkey store.MasterKey,
+) error {
+	p := store.NewPrincipal(ForeignRealm,
+		[]string{"krbtgt", Realm})
+	if err := p.SetPassword(
+		mkey, InterRealmPassword, 1); err != nil {
+		return err
+	}
+	return s.Save(ctx, p)
 }
 
 // storeName is the database key for a principal in this realm, which

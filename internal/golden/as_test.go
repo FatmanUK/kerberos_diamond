@@ -145,12 +145,27 @@ func decrypt(
 	usage crypto.Usage,
 ) []byte {
 	t.Helper()
+	return decryptIn(t, ed, Realm, password, components, usage)
+}
+
+// decryptIn is decrypt with the salt's realm named, which a
+// cross-realm case needs: a principal's default salt is its own
+// realm's, and the foreign realm's principals are not salted with
+// this one.
+func decryptIn(
+	t *testing.T,
+	ed wire.EncryptedData,
+	realm, password string,
+	components []string,
+	usage crypto.Usage,
+) []byte {
+	t.Helper()
 	p, err := crypto.Profile(crypto.EncType(ed.EType))
 	if err != nil {
 		t.Fatalf("enctype %d: %v", ed.EType, err)
 	}
 	key, err := p.StringToKey(password,
-		crypto.Salt(Realm, components), nil)
+		crypto.Salt(realm, components), nil)
 	if err != nil {
 		t.Fatalf("StringToKey: %v", err)
 	}

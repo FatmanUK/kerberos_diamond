@@ -100,12 +100,28 @@ func tgsRequest(
 	mutate func(*wire.KDCReqBody),
 ) ([]byte, wire.TGSReq) {
 	t.Helper()
-	body := tgsBody(components)
-	if mutate != nil {
-		mutate(&body)
+	return tgsRequestAs(t, tgt, sessionKey, components,
+		mutate, nil)
+}
+
+// tgsRequestAs is tgsRequest with the authenticator open to change
+// too, which a cross-realm case needs: the authenticator names the
+// client, and a client of another realm is not the fixture's own.
+func tgsRequestAs(
+	t *testing.T,
+	tgt wire.Ticket,
+	sessionKey []byte,
+	components []string,
+	body func(*wire.KDCReqBody),
+	auth func(*wire.Authenticator),
+) ([]byte, wire.TGSReq) {
+	t.Helper()
+	b := tgsBody(components)
+	if body != nil {
+		body(&b)
 	}
-	req := wire.TGSReq{Body: body}
-	return signRequest(t, &req, tgt, sessionKey, nil), req
+	req := wire.TGSReq{Body: b}
+	return signRequest(t, &req, tgt, sessionKey, auth), req
 }
 
 // aes256 is the profile every test here keys with.

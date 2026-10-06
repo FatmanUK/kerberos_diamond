@@ -105,6 +105,12 @@ ENV KRB5_REALM=KDIAMOND.TEST \
     KRB5_SERVICE_PASSWORD=servicepassword \
     KRB5_PEER=peer \
     KRB5_PEER_PASSWORD=peerpassword \
+    KRB5_FOREIGN_REALM=FOREIGN.TEST \
+    KRB5_FOREIGN_MASTER_PASSWORD=foreignmaster \
+    KRB5_REMOTE=remote \
+    KRB5_REMOTE_PASSWORD=remotepassword \
+    KRB5_FOREIGN_TGT_PASSWORD=foreigntgtpassword \
+    KRB5_INTERREALM_PASSWORD=interrealmpassword \
     KRB5_KDC_PORT=8088 \
     KRB5_TESTDIR=/realm \
     TZ=UTC \
@@ -127,4 +133,10 @@ ENV KRB5_CONFIG=/realm/krb5.conf \
 
 EXPOSE 8088
 ENTRYPOINT ["/usr/local/bin/realm-setup"]
-CMD ["krb5kdc", "-n"]
+# Both realms are named explicitly: krb5kdc serves only the default
+# realm unless it is given -r for each, and one process serving both on
+# one port is what lets the cross-realm comparison use a single
+# container. The names are the image's fixed fixture, like the
+# passwords above, so they are written out rather than taken from the
+# environment -- CMD cannot expand a variable anyway.
+CMD ["krb5kdc", "-n", "-r", "KDIAMOND.TEST", "-r", "FOREIGN.TEST"]

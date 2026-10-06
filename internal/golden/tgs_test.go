@@ -113,13 +113,27 @@ func tgsRequestFor(
 // tgsAPReq builds the PA-TGS-REQ a client sends.
 func tgsAPReq(t *testing.T, g tgt, bodyDER []byte) wire.PAData {
 	t.Helper()
+	return tgsAPReqAs(t, g, bodyDER, Realm, UserName)
+}
+
+// tgsAPReqAs is tgsAPReq with the client named, which a cross-realm
+// case needs: the authenticator says who the client is and it has to
+// agree with the presented ticket, whose client is of another realm.
+func tgsAPReqAs(
+	t *testing.T,
+	g tgt,
+	bodyDER []byte,
+	crealm, cname string,
+) wire.PAData {
+	t.Helper()
 	// The authenticator is keyed with the session key, so its
 	// profile is the session key's and not the ticket's.
 	p, err := crypto.Profile(g.sessionEType)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ct := sealAuthenticator(t, p, g.session, bodyDER)
+	ct := sealAuthenticator(t, p, g.session, bodyDER,
+		crealm, cname)
 	apreq, err := wire.MarshalAPReq(wire.APReq{
 		Ticket: g.ticket,
 		Authenticator: wire.EncryptedData{
@@ -143,6 +157,7 @@ func sealAuthenticator(
 	t *testing.T,
 	p *crypto.EncProfile,
 	session, bodyDER []byte,
+	crealm, cname string,
 ) []byte {
 	t.Helper()
 	sum, err := p.Checksum(session, bodyDER,
@@ -152,10 +167,10 @@ func sealAuthenticator(
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	plain, err := wire.MarshalAuthenticator(wire.Authenticator{
-		CRealm: Realm,
+		CRealm: crealm,
 		CName: wire.PrincipalName{
 			Type:       wire.NTPrincipal,
-			Components: []string{UserName},
+			Components: []string{cname},
 		},
 		Cksum: &wire.Checksum{
 			Type:     int32(p.RequiredCksum),

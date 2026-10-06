@@ -18,6 +18,12 @@ set -eu
 : "${KRB5_SERVICE_PASSWORD:?}"
 : "${KRB5_PEER:?}"
 : "${KRB5_PEER_PASSWORD:?}"
+: "${KRB5_FOREIGN_REALM:?}"
+: "${KRB5_FOREIGN_MASTER_PASSWORD:?}"
+: "${KRB5_REMOTE:?}"
+: "${KRB5_REMOTE_PASSWORD:?}"
+: "${KRB5_FOREIGN_TGT_PASSWORD:?}"
+: "${KRB5_INTERREALM_PASSWORD:?}"
 : "${KRB5_KDC_PORT:?}"
 : "${KRB5_TESTDIR:?}"
 
@@ -59,6 +65,22 @@ cat >"$KRB5_CONFIG" <<EOF
 [realms]
 	$KRB5_REALM = {
 		kdc = 127.0.0.1:$KRB5_KDC_PORT
+	}
+
+	$KRB5_FOREIGN_REALM = {
+		kdc = 127.0.0.1:$KRB5_KDC_PORT
+	}
+
+# The two realms trust each other directly and nothing else, so the
+# path between them is named rather than guessed. Without this a client
+# falls back to the hierarchical walk, which for two realms sharing only
+# the "TEST" suffix would look for krbtgt/TEST and fail.
+[capaths]
+	$KRB5_REALM = {
+		$KRB5_FOREIGN_REALM = .
+	}
+	$KRB5_FOREIGN_REALM = {
+		$KRB5_REALM = .
 	}
 
 # preauth2.c:133 auto-registers pkinit as a *dynamic* clpreauth module
@@ -110,10 +132,25 @@ cat >"$KRB5_KDC_PROFILE" <<EOF
 		kdc_tcp_listen = $KRB5_KDC_PORT
 	}
 
+	$KRB5_FOREIGN_REALM = {
+		supported_enctypes = aes256-cts-hmac-sha384-192:normal aes128-cts-hmac-sha256-128:normal aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal
+		database_module = fdb
+		key_stash_file = $KRB5_TESTDIR/fstash
+		acl_file = $KRB5_TESTDIR/acl
+		dict_file = $KRB5_TESTDIR/dictfile
+		kdc_listen = ""
+		kdc_tcp_listen = $KRB5_KDC_PORT
+	}
+
 [dbmodules]
 	db = {
 		db_library = db2
 		database_name = $KRB5_TESTDIR/db
+	}
+
+	fdb = {
+		db_library = db2
+		database_name = $KRB5_TESTDIR/fdb
 	}
 
 [logging]
@@ -177,5 +214,44 @@ kadmin.local -q "addprinc -pw $KRB5_PEER_PASSWORD -kvno 1 \
 # than papered over.
 kadmin.local -q "cpw -pw $KRB5_TGT_PASSWORD \
 	krbtgt/$KRB5_REALM@$KRB5_REALM" >/dev/null
+
+# The inter-realm key, in *this* realm's database. It is what lets this
+# KDC verify a ticket-granting ticket the foreign realm issued for a
+# service here, and it is the whole of the trust: a KDC holds a key for
+# krbtgt/<here>@<there> exactly when it has agreed to trust <there>.
+#
+# Note the principal's name says <here> and its realm says <there>, and
+# that the same principal with the same key exists in both databases
+# below -- the default salt is realm plus name components, so one
+# password gives one key on both sides.
+kadmin.local -q "addprinc -pw $KRB5_INTERREALM_PASSWORD -kvno 1 \
+	krbtgt/$KRB5_REALM@$KRB5_FOREIGN_REALM" >/dev/null
+
+# A second realm, in this same container and on this same port. krb5kdc
+# serves as many realms as it is given -r for, so one container is
+# enough and the harness needs no second port -- and the cross-realm
+# comparison is then of the *same* cross TGT presented to the C KDC and
+# to the Go one, which is the only comparison worth making.
+#
+# Its master key is a different password from the first realm's. Sharing
+# one would make a bug that confused the two realms' master keys
+# invisible.
+kdb5_util -r "$KRB5_FOREIGN_REALM" create -s \
+	-P "$KRB5_FOREIGN_MASTER_PASSWORD" >/dev/null
+
+kadmin.local -r "$KRB5_FOREIGN_REALM" \
+	-q "addprinc -pw $KRB5_REMOTE_PASSWORD -kvno 1 \
+	$KRB5_REMOTE@$KRB5_FOREIGN_REALM" >/dev/null
+
+kadmin.local -r "$KRB5_FOREIGN_REALM" \
+	-q "cpw -pw $KRB5_FOREIGN_TGT_PASSWORD \
+	krbtgt/$KRB5_FOREIGN_REALM@$KRB5_FOREIGN_REALM" >/dev/null
+
+# The other half of the trust, and the same principal as above: the
+# foreign realm holds it so it can *issue* the cross TGT, and the local
+# realm holds it so it can verify one.
+kadmin.local -r "$KRB5_FOREIGN_REALM" \
+	-q "addprinc -pw $KRB5_INTERREALM_PASSWORD -kvno 1 \
+	krbtgt/$KRB5_REALM@$KRB5_FOREIGN_REALM" >/dev/null
 
 exec "$@"

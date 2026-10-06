@@ -85,6 +85,25 @@ func pointAtDiamond(
 	trace bool,
 ) []string {
 	t.Helper()
+	env := pointAtDiamondWith(t, ctx, o, tag, clientConf)
+	if trace {
+		env = append(env, "KRB5_TRACE=/dev/stderr")
+	}
+	return env
+}
+
+// pointAtDiamondWith is pointAtDiamond with the configuration left to
+// the caller, which the cross-realm case needs: its client's own
+// realm is served by the C KDC and only the service's realm goes
+// through the shim.
+func pointAtDiamondWith(
+	t *testing.T,
+	ctx context.Context,
+	o *Oracle,
+	tag string,
+	conf func(port int) string,
+) []string {
+	t.Helper()
 	d := diamond(t, "kd_golden_e2e_"+tag, time.Now().UTC)
 	lastDiamond = d
 	s, err := Serve(ctx, d)
@@ -93,19 +112,15 @@ func pointAtDiamond(
 	}
 	t.Cleanup(s.Close)
 
-	conf := "/realm/diamond-" + tag + ".conf"
-	err = o.WriteFile(ctx, conf, clientConf(s.ShimPort))
-	if err != nil {
+	path := "/realm/diamond-" + tag + ".conf"
+	if err := o.WriteFile(
+		ctx, path, conf(s.ShimPort)); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{
-		"KRB5_CONFIG=" + conf,
+	return []string{
+		"KRB5_CONFIG=" + path,
 		"KRB5CCNAME=/realm/diamond-" + tag + ".ccache",
 	}
-	if trace {
-		env = append(env, "KRB5_TRACE=/dev/stderr")
-	}
-	return env
 }
 
 // lastDiamond is the Go KDC pointAtDiamond most recently started.

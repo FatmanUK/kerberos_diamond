@@ -23,7 +23,12 @@ type tgsState struct {
 
 	header    wire.EncTicketPart
 	headerSrv wire.PrincipalName
-	auth      wire.Authenticator
+
+	// headerRealm is the realm the presented ticket was issued
+	// in, which is not this realm for a cross-realm request.
+	headerRealm string
+
+	auth wire.Authenticator
 
 	// replyKey is the authenticator's subkey when it sent one and
 	// the header ticket's session key otherwise, and replyUsage
@@ -129,9 +134,13 @@ func (k *KDC) openHeader(
 	s *tgsState,
 	ap wire.APReq,
 ) (int32, string) {
-	if ap.Ticket.Realm != k.Realm {
-		return wire.ErrCodeNotUs, "FOREIGN TICKET"
-	}
+	// A foreign realm is not refused here. The ticket's server is
+	// looked up under the ticket's own realm, so a cross-realm
+	// TGT resolves to krbtgt/<here>@<there> -- a principal this
+	// KDC holds only if it has agreed to trust that realm. The
+	// lookup succeeding is the trust check, and checkTGT then
+	// insists the name really is a krbtgt for the realm being
+	// asked about.
 	key, code, status := k.ticketKey(ap.Ticket)
 	if code != 0 {
 		return code, status
@@ -140,7 +149,8 @@ func (k *KDC) openHeader(
 	if code != 0 {
 		return code, status
 	}
-	s.header, s.headerSrv = tkt, ap.Ticket.SName
+	s.header = tkt
+	s.headerSrv, s.headerRealm = ap.Ticket.SName, ap.Ticket.Realm
 	if tsAfter(s.now, stamp(tkt.EndTime)) {
 		return wire.ErrCodeTktExpired, "TICKET EXPIRED"
 	}
@@ -157,7 +167,11 @@ func (k *KDC) openHeader(
 func (k *KDC) ticketKey(
 	tkt wire.Ticket,
 ) ([]byte, int32, string) {
-	name := store.UnparseName(k.Realm, tkt.SName.Components)
+	// The ticket's own realm, not this KDC's: a cross-realm TGT
+	// names krbtgt/<here> but belongs to the realm that issued
+	// it, and that is the principal whose key sealed it.
+	name := store.UnparseName(
+		tkt.Realm, tkt.SName.Components)
 	srv, err := k.Store.Lookup(context.Background(), name)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, wire.ErrCodeSPrincipalUnknown,
@@ -348,6 +362,9 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 	if code, status := k.checkHeaderServer(s); code != 0 {
 		return code, status
 	}
+	if code, status := k.checkLineage(s); code != 0 {
+		return code, status
+	}
 	if code, status := k.checkU2U(s); code != 0 {
 		return code, status
 	}
@@ -451,6 +468,9 @@ func (k *KDC) checkNonTGT(s *tgsState) (int32, string) {
 // the flag on a path nothing examined would be a lie a service relies
 // on.
 func (k *KDC) checkTransited(s *tgsState) (int32, string) {
+	if code, status := k.checkCrossTransit(s); code != 0 {
+		return code, status
+	}
 	if s.req.Body.Options&wire.OptDisableTransitedCheck != 0 {
 		// The flag stays clear, and with reject_bad_transit's
 		// default that is a refusal -- which is what upstream
