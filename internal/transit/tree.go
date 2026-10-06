@@ -13,31 +13,54 @@ type TGSName struct {
 	Realm   string
 }
 
-// Tree is the sequence of ticket-granting services between two
-// realms, by hierarchical traversal (krb5_walk_realm_tree with no
-// [capaths], lib/krb5/krb/walk_rtree.c:93-121 and rtree_hier_tree at
-// :344-387).
+// Tree is the sequence of ticket-granting services between two realms
+// (krb5_walk_realm_tree, lib/krb5/krb/walk_rtree.c:93-121).
 //
+// A configured path wins; otherwise the realm hierarchy is walked.
 // The hierarchy is in the names: A.EXAMPLE.COM and B.EXAMPLE.COM are
 // both below EXAMPLE.COM, so a path between them runs up to the
 // common suffix and back down. That is a convention and not a fact
-// about the realms, which is why upstream lets [capaths] override it
-// entirely -- and why this implementation, which has no [capaths]
-// yet, can only decide paths the convention describes.
+// about the realms, which is exactly why configuration has to be able
+// to override it.
 //
 // There is no path from a realm to itself, which upstream reports as
 // an error rather than an empty list.
-func Tree(client, server string) ([]TGSName, error) {
+func (p Paths) Tree(client, server string) ([]TGSName, error) {
 	if client == "" || server == "" || client == server {
 		return nil, ErrNoPath
 	}
-	out := []TGSName{}
+	if hops, ok := p.hops(client, server); ok {
+		// rtree_capath_tree names the client's own realm
+		// first, then each configured hop, then the server
+		// (walk_rtree.c:252-274).
+		dsts := make([]string, 0, len(hops)+2)
+		dsts = append(dsts, client)
+		dsts = append(dsts, hops...)
+		return chain(client, append(dsts, server)), nil
+	}
+	// rtree_hier_realms already starts with the client's realm
+	// and ends with the server's, so the whole list is the walk
+	// (walk_rtree.c:368-377).
+	return chain(client, hierRealms(client, server)), nil
+}
+
+// Tree is Paths.Tree with no configuration, which is the hierarchy
+// alone.
+func Tree(client, server string) ([]TGSName, error) {
+	return Paths(nil).Tree(client, server)
+}
+
+// chain walks a list of destination realms from the client's own,
+// naming the ticket-granting service each hop has to ask for: the
+// service is where the hop is going and the realm is where it starts.
+func chain(client string, dsts []string) []TGSName {
+	out := make([]TGSName, 0, len(dsts))
 	src := client
-	for _, dst := range hierRealms(client, server) {
+	for _, dst := range dsts {
 		out = append(out, TGSName{Service: dst, Realm: src})
 		src = dst
 	}
-	return out, nil
+	return out
 }
 
 // Allowed is the set of realms a path between two realms may name.
@@ -47,8 +70,10 @@ func Tree(client, server string) ([]TGSName, error) {
 // which half that is: the realm a ticket-granting ticket was *issued
 // by*, not the one it grants tickets for. A realm appears exactly
 // when some hop in the path starts there.
-func Allowed(client, server string) (map[string]bool, error) {
-	tree, err := Tree(client, server)
+func (p Paths) Allowed(
+	client, server string,
+) (map[string]bool, error) {
+	tree, err := p.Tree(client, server)
 	if err != nil {
 		return nil, err
 	}
@@ -57,6 +82,11 @@ func Allowed(client, server string) (map[string]bool, error) {
 		out[t.Realm] = true
 	}
 	return out, nil
+}
+
+// Allowed is Paths.Allowed with no configuration.
+func Allowed(client, server string) (map[string]bool, error) {
+	return Paths(nil).Allowed(client, server)
 }
 
 // hstate is upstream's struct hstate (walk_rtree.c:41-47), holding a

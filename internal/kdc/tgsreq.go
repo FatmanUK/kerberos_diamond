@@ -7,7 +7,6 @@ import (
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/transit"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
 
@@ -44,6 +43,12 @@ type tgsState struct {
 	// asked for user-to-user.
 	stkt    *wire.EncTicketPart
 	stktSrv wire.PrincipalName
+
+	// serverName is the name the issued ticket will carry, which
+	// is the one asked for unless referral is set -- a referral
+	// names an intermediate realm's krbtgt instead.
+	serverName wire.PrincipalName
+	referral   bool
 
 	server      *store.Principal
 	serverKey   []byte
@@ -311,7 +316,14 @@ func (s *tgsState) replyKeyFrom(p *crypto.EncProfile) {
 	s.replyUsage = crypto.UsageTGSRepEncPartSessKey
 }
 
-// tgsServer loads the principal the client is asking for a ticket to.
+// tgsServer loads the principal the client is asking for a ticket to
+// (search_sprinc, do_tgs_req.c:541-581).
+//
+// A lookup that comes up empty is not always the end: when the name
+// is a cross-realm ticket-granting service this realm does not hold,
+// the KDC knows a path the client does not and hands back an
+// intermediate instead. The issued ticket then names something other
+// than what was asked for, which is what a referral is.
 func (k *KDC) tgsServer(s *tgsState) (int32, string) {
 	if s.req.Body.SName == nil {
 		return wire.ErrCodeSPrincipalUnknown, "NO SERVER NAME"
@@ -319,19 +331,43 @@ func (k *KDC) tgsServer(s *tgsState) (int32, string) {
 	if s.req.Body.Realm != k.Realm {
 		return wire.ErrCodeSPrincipalUnknown, "WRONG REALM"
 	}
+	s.serverName = *s.req.Body.SName
 	srv, err := k.Store.LookupWire(context.Background(),
 		k.Realm, s.req.Body.SName.Components)
 	if errors.Is(err, store.ErrNotFound) {
+		if code, status := k.alternate(s); code != 0 {
+			return code, status
+		}
+	} else if err != nil {
+		return wire.ErrCodeGeneric, "LOOKUP_SERVER"
+	} else {
+		s.server = srv
+	}
+	return k.serverKeyFor(s)
+}
+
+// alternate fills in a referral server, or reports the refusal that
+// stands when there is none.
+func (k *KDC) alternate(s *tgsState) (int32, string) {
+	if !k.wantsAlternateTGS(s) {
 		return wire.ErrCodeSPrincipalUnknown,
 			"SERVER NOT FOUND"
 	}
-	if err != nil {
-		return wire.ErrCodeGeneric, "LOOKUP_SERVER"
+	srv, name, ok := k.findAlternateTGS(s)
+	if !ok {
+		return wire.ErrCodeSPrincipalUnknown, "UNKNOWN_SERVER"
 	}
-	s.server = srv
+	s.server, s.serverName, s.referral = srv, name, true
+	return 0, ""
+}
+
+// serverKeyFor finds the key the issued ticket will be sealed with:
+// the first key of the server's highest key version, whatever its
+// enctype (get_first_current_key, kdc/kdc_util.c:461-473).
+func (k *KDC) serverKeyFor(s *tgsState) (int32, string) {
 	start := 0
-	row, key, err := k.Store.Key(srv, &start, store.AnyEType,
-		store.AnySaltType, store.HighestKVNO)
+	row, key, err := k.Store.Key(s.server, &start,
+		store.AnyEType, store.AnySaltType, store.HighestKVNO)
 	if err != nil {
 		return wire.ErrCodeSPrincipalUnknown,
 			"FINDING_SERVER_KEY"
@@ -479,7 +515,7 @@ func (k *KDC) checkNonTGT(s *tgsState) (int32, string) {
 // check leaves the flag clear, and a clear flag is a refusal.
 func (k *KDC) checkTransited(s *tgsState) (int32, string) {
 	if s.req.Body.Options&wire.OptDisableTransitedCheck == 0 {
-		err := transit.Check(string(s.transited.Contents),
+		err := k.Paths.Check(string(s.transited.Contents),
 			s.header.CRealm, s.req.Body.Realm)
 		s.transitChecked = err == nil
 	}

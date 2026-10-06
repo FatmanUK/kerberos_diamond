@@ -89,6 +89,15 @@ const (
 	FarPassword      = "farpassword"
 	MidLocalPassword = "midlocalpassword"
 
+	// FarTGTPassword and FarMidPassword are the far realm's own
+	// krbtgt key and its trust with the middle realm. The Go side
+	// needs them only to *be* the far realm, which one
+	// differential case does so that the alternate-TGS search can
+	// be compared: that search runs at the realm a client asks
+	// from, and the realm a client asks from is the far one.
+	FarTGTPassword = "fartgtpassword"
+	FarMidPassword = "farmidpassword"
+
 	// OraclePort is the port the C KDC listens on *inside* the
 	// container, which is fixed by the image. A process in the
 	// container reaches it at 127.0.0.1:OraclePort; the host

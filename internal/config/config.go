@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/kerberos_diamond/internal/transit"
 )
 
 // Config is the whole of a process's configuration.
@@ -70,6 +71,18 @@ type Config struct {
 	// ClockSkew is how far a timestamp may be from this host's
 	// clock and still be accepted.
 	ClockSkew time.Duration
+
+	// Paths are the cross-realm authentication paths, krb5.conf's
+	// [capaths] in one line. Empty means none, and then every
+	// path is decided by the realm-naming hierarchy -- which is
+	// the common case, because realms in one organisation are
+	// usually named as a hierarchy on purpose.
+	//
+	// It is configuration rather than something stored for the
+	// same reason MasterKDF is: nothing persists that could carry
+	// it, and a KDC derives its whole view of the world from the
+	// environment at startup.
+	Paths transit.Paths
 }
 
 // Defaults for everything that can sensibly have one. The database
@@ -101,6 +114,17 @@ func Load() (*Config, error) {
 		MasterPassword: os.Getenv("KD_MASTER_PASSWORD"),
 	}
 
+	errs := c.parse()
+	errs = append(errs, c.validate()...)
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	return c, nil
+}
+
+// parse fills in the fields that need more than reading a string, and
+// collects their faults rather than returning at the first.
+func (c *Config) parse() []error {
 	var errs []error
 	if d := os.Getenv("KD_CLOCK_SKEW"); d != "" {
 		parsed, err := time.ParseDuration(d)
@@ -118,12 +142,13 @@ func Load() (*Config, error) {
 	} else {
 		c.MasterKDF = kdf
 	}
-	errs = append(errs, c.validate()...)
-
-	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
+	paths, err := transit.ParsePaths(os.Getenv("KD_CAPATHS"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("KD_CAPATHS: %w", err))
+	} else {
+		c.Paths = paths
 	}
-	return c, nil
+	return errs
 }
 
 // required names the variables a KDC cannot start without, paired

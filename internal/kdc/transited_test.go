@@ -7,6 +7,7 @@ import (
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/kerberos_diamond/internal/transit"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
 
@@ -248,4 +249,171 @@ func decodeTicketWith2(
 		t.Fatalf("EncTicketPart: %v", err)
 	}
 	return out
+}
+
+// A client with no path configuration of its own asks for the trust
+// it wants and gets an intermediate instead. This is the hop the C
+// KDC took the first time this project's three-realm fixture was
+// driven by hand: asked for krbtgt/<here> from the far realm, which
+// holds no such key, it answered with krbtgt/<middle>@<far> and let
+// the client ask again from there (find_alternate_tgs,
+// do_tgs_req.c:371).
+func TestAlternateTGSIsOffered(t *testing.T) {
+	k := testKDC(t)
+	far, _ := threeRealms(t, k)
+
+	tgt, session := farTGT(t, far)
+	// The far realm has no trust with this one, only with the
+	// middle realm.
+	msg, req := tgsRequestAs(t, tgt, session,
+		[]string{tgsName, testRealm},
+		func(b *wire.KDCReqBody) { b.Realm = farRealm },
+		asFarUser)
+	rep, kerr := far.TGS(msg, req)
+	if kerr != nil {
+		t.Fatalf("the far TGS refused: %v", kerr)
+	}
+	want := tgsName + "/" + midRealm
+	if got := rep.Ticket.SName.String(); got != want {
+		t.Errorf("the ticket names %q, want %q", got, want)
+	}
+	// The reply's sealed half has to agree with the ticket, or a
+	// client would cache the credential under the name it asked
+	// for and present it to the wrong realm.
+	enc := openTGSRep(t, rep, session)
+	if got := enc.SName.String(); got != want {
+		t.Errorf("the reply names %q, want %q", got, want)
+	}
+}
+
+// A realm with no reachable hop towards it is still unknown. The
+// search offers an intermediate, not any key the realm happens to
+// hold.
+//
+// This is driven from the *local* realm rather than the far one, and
+// the reason is a finding: the hierarchical walk from a realm always
+// begins with that realm's immediate parent, so any realm holding a
+// trust with its parent has *something* to offer towards everywhere.
+// Asked for krbtgt/ELSEWHERE.TEST, the far realm answers with the
+// middle realm's TGT and lets the client discover the dead end
+// further along -- and the C KDC was asked and does exactly the same.
+// The local realm holds no trust at all along that path, so it is the
+// one that can refuse.
+func TestAlternateTGSRefusesAnUnreachableRealm(t *testing.T) {
+	k := testKDC(t)
+	threeRealms(t, k)
+	tgt, session := getTGT(t, k)
+
+	msg, req := tgsRequest(t, tgt, session,
+		[]string{tgsName, "ELSEWHERE.TEST"}, nil)
+	_, kerr := k.TGS(msg, req)
+	if kerr == nil {
+		t.Fatal("issued a ticket with no hop to offer")
+	}
+	if kerr.ErrorCode != wire.ErrCodeSPrincipalUnknown {
+		t.Errorf("code %d, want S_PRINCIPAL_UNKNOWN",
+			kerr.ErrorCode)
+	}
+}
+
+// A configured path decides the search as much as it decides the
+// check: the far realm's hierarchy would find the middle realm
+// anyway, so the case worth asserting is one where configuration
+// sends it somewhere the names do not.
+func TestAlternateTGSFollowsAConfiguredPath(t *testing.T) {
+	k := testKDC(t)
+	far, _ := threeRealms(t, k)
+	// Nothing in the names relates these two, and the path says
+	// to go through the middle realm.
+	paths, err := transit.ParsePaths(
+		farRealm + ">ELSEWHERE.TEST=" + midRealm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	far.Paths = paths
+
+	tgt, session := farTGT(t, far)
+	msg, req := tgsRequestAs(t, tgt, session,
+		[]string{tgsName, "ELSEWHERE.TEST"},
+		func(b *wire.KDCReqBody) { b.Realm = farRealm },
+		asFarUser)
+	rep, kerr := far.TGS(msg, req)
+	if kerr != nil {
+		t.Fatalf("the far TGS refused: %v", kerr)
+	}
+	want := tgsName + "/" + midRealm
+	if got := rep.Ticket.SName.String(); got != want {
+		t.Errorf("the ticket names %q, want %q", got, want)
+	}
+}
+
+// The options that name a ticket the client already holds forbid a
+// referral (NO_REFERRAL_OPTION, kdc/kdc_util.h:460): answering one
+// with a different server would answer a different question.
+func TestNoReferralForATicketTheClientHolds(t *testing.T) {
+	k := testKDC(t)
+	far, _ := threeRealms(t, k)
+
+	tgt, session := farTGT(t, far)
+	msg, req := tgsRequestAs(t, tgt, session,
+		[]string{tgsName, testRealm},
+		func(b *wire.KDCReqBody) {
+			b.Realm = farRealm
+			b.Options |= wire.OptRenew
+		},
+		asFarUser)
+	_, kerr := far.TGS(msg, req)
+	if kerr == nil {
+		t.Fatal("a renewal was answered with a referral")
+	}
+	if kerr.ErrorCode != wire.ErrCodeSPrincipalUnknown {
+		t.Errorf("code %d, want S_PRINCIPAL_UNKNOWN",
+			kerr.ErrorCode)
+	}
+}
+
+// Configuration is consulted for the transited check and not only for
+// the referral search. The path here deliberately routes around the
+// realm the ticket actually came through, so the same request that
+// succeeds on the hierarchy must now be refused -- which is what says
+// the KDC reads its Paths at all.
+func TestConfiguredPathIsUsedForTheCheck(t *testing.T) {
+	k := testKDC(t)
+	addService(t, k, 0)
+	far, mid := threeRealms(t, k)
+
+	tgt, session := farTGT(t, far)
+	cross, session := hop(t, far, tgt, session, midRealm)
+	cross, session = hop(t, mid, cross, session, testRealm)
+
+	// A path from the far realm to here that goes somewhere else.
+	paths, err := transit.ParsePaths(
+		farRealm + ">" + testRealm + "=ELSEWHERE.TEST")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.Paths = paths
+
+	msg, req := tgsRequestAs(t, cross, session, serviceName,
+		nil, asFarUser)
+	_, kerr := k.TGS(msg, req)
+	if kerr == nil {
+		t.Fatal("a route the path excludes was accepted")
+	}
+	if kerr.ErrorCode != wire.ErrCodePolicy {
+		t.Errorf("code %d, want POLICY", kerr.ErrorCode)
+	}
+
+	// And the same request succeeds once the configuration names
+	// the realm the ticket really came through, so the refusal
+	// above was the path and not something else.
+	paths, err = transit.ParsePaths(
+		farRealm + ">" + testRealm + "=" + midRealm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.Paths = paths
+	if _, kerr := k.TGS(msg, req); kerr != nil {
+		t.Errorf("the configured route was refused: %v", kerr)
+	}
 }

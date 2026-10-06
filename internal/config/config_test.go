@@ -128,3 +128,54 @@ func TestClockSkew(t *testing.T) {
 		})
 	}
 }
+
+// KD_CAPATHS is read into a usable Paths, and a malformed one is a
+// configuration error rather than something discovered much later
+// when a cross-realm ticket is refused for no visible reason.
+func TestCapaths(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_CAPATHS",
+		"ANL.GOV>NERSC.GOV=ES.NET;ANL.GOV>ES.NET=.")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tree, err := c.Paths.Tree("ANL.GOV", "NERSC.GOV")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tree) != 3 || tree[1].Service != "ES.NET" {
+		t.Errorf("the path is %v, want a hop via ES.NET",
+			tree)
+	}
+}
+
+// Unset means no configuration, and then every path comes from the
+// realm hierarchy. That is the common case, so it must not be an
+// error.
+func TestCapathsUnsetIsNotAnError(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_CAPATHS", "")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Paths != nil {
+		t.Errorf("unset gave %v", c.Paths)
+	}
+}
+
+func TestCapathsMalformed(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_CAPATHS", "ANL.GOV>NERSC.GOV")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("a malformed KD_CAPATHS was accepted")
+	}
+	if !strings.Contains(err.Error(), "KD_CAPATHS") {
+		t.Errorf("the error does not name it: %v", err)
+	}
+}

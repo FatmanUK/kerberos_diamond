@@ -55,6 +55,13 @@ that have aged worst in the C:
   presents *one* TGT to both implementations in the same encoded TGS-REQ —
   they share the fixture's krbtgt key, so the same ticket is valid at either —
   and compares the two replies field for field with both halves decrypted.
+- **Paths that the realm names do not describe can be configured**, with
+  `KD_CAPATHS` standing in for krb5.conf's `[capaths]` — upstream's own
+  documented example transcribed into one line. And a client that asks for a
+  trust this realm does not hold is handed an intermediate rather than
+  refused, which is `find_alternate_tgs`. That one is compared against the C
+  with both implementations standing up *as the far realm*, because the search
+  runs where a client asks from and never at the near end of a path.
 - **A path through a middle realm is recorded and checked.**
   `internal/transit` is the transited field: `Add` compresses a realm into
   the encoding and `Check` expands it back and refuses any realm off the
@@ -132,23 +139,22 @@ Everything the plan file listed is done, so this list is now the live one.
 
 1. ~~**The TGS cases nothing issues yet**~~ — forwarding, proxying and
    user-to-user. Done, and they found three divergences between them; see §6.
-2. **`[capaths]` and the alternate-TGS search**, which are what is left of
-   cross-realm. Paths the realm-naming hierarchy describes work, including
-   through a middle realm; a path between two realms with no hierarchical
-   relationship needs configuration (`rtree_capath_vals`,
-   `lib/krb5/krb/walk_rtree.c:124`), and a client that asks for a trust this
-   realm does not hold needs `find_alternate_tgs` (`do_tgs_req.c:371`) to be
-   handed an intermediate rather than a refusal. `internal/transit` already
-   has the hierarchy half of both.
+2. ~~**`[capaths]` and the alternate-TGS search.**~~ Done. Cross-realm is
+   complete except for the host-based referral below.
 3. **FAST** (RFC 6113), which would also let the KDC stop declining to
    advertise it — currently the harness's one declared exemption.
-4. **A `kadmin` protocol**, for provisioning from off-host. The `kdiamond`
+4. **The host-based referral**, `find_referral_tgs` (`do_tgs_req.c:487-523`):
+   a client asking for `host/www.example.com` in the wrong realm is told
+   which realm to ask instead, from a host-to-realm map. It needs a
+   `[domain_realm]` equivalent, which is a configuration surface this
+   project does not have yet, and it is the only part of cross-realm left.
+5. **A `kadmin` protocol**, for provisioning from off-host. The `kdiamond`
    subcommands need a shell on the KDC's machine; something external
    eventually will not have one.
-5. **A client built with a TLS module**, so the HTTPS leg is covered end to
+6. **A client built with a TLS module**, so the HTTPS leg is covered end to
    end without `kdiamond-proxy` in the way.
-6. **The Windows PAC**, last but one.
-7. **S4U2Self and S4U2Proxy**, last.
+7. **The Windows PAC**, last but one.
+8. **S4U2Self and S4U2Proxy**, last.
 
 ## 3. Project State
 
@@ -190,7 +196,11 @@ The layout is filled in; §1 says what each package does.
   variable: no configuration file, no flag that persists anything, nothing
   read from the database at startup. `internal/config` reports *all* of a
   bad environment's faults at once, because reporting the first costs one
-  restart per mistake.
+  restart per mistake. Where a setting corresponds to a krb5.conf section,
+  the section's own syntax is folded onto one line rather than
+  reinterpreted — `KD_CAPATHS` is `[capaths]` that way — so an existing
+  configuration can be transcribed and its meaning looked up in upstream's
+  documentation.
 - **Tools**: `tools/reflow` rewraps comment paragraphs to 70 columns.
   `gofmt` does not wrap, so the rule in `CLAUDE.md` is otherwise
   unenforceable; `make fmt` runs gofmt, reflow, then gofmt again.
@@ -333,22 +343,33 @@ are not "fixed" back by accident.
   the condition suggests. `KDC_OPT_DISABLE_TRANSITED_CHECK` therefore refuses
   the request under the default policy rather than waving it through: skipping
   the check leaves the flag clear, and a clear flag is a refusal.
-- **Only paths the realm hierarchy describes are accepted, because there is no
-  `[capaths]`.** Upstream consults it first and falls back to the hierarchy
-  (`rtree_capath_vals`, `lib/krb5/krb/walk_rtree.c:124`), so a realm pair with
-  no hierarchical relationship can still be given a path by configuration.
-  Without it, `internal/transit` accepts exactly the paths the naming
-  convention describes — and that is a real limitation rather than a
-  safe-by-default one: a legitimate path between two unrelated realms is
-  refused. One boundary is unaffected, because a single hop records nothing
-  and an empty field passes without the path being consulted at all.
-- **No alternate-TGS search.** `find_alternate_tgs` (`do_tgs_req.c:371`) hands
-  a client an intermediate realm's ticket-granting ticket when the trust it
-  asked for is unknown, so a client with no `[capaths]` of its own can still
-  be steered along a path. Without it a request for a trust this realm does
-  not hold gets `S_PRINCIPAL_UNKNOWN`, which is what upstream answers when its
-  own search comes up empty. `internal/transit.Tree` already computes the
-  path this would walk.
+- **A path is the hierarchy unless configuration says otherwise.** The realm
+  hierarchy is a convention about *names* — A.EXAMPLE.COM and B.EXAMPLE.COM
+  look related — and nothing about HAL.COM says the route to it runs through
+  ES.NET. Upstream's own comment makes the point by quoting RFC 1510
+  (`walk_rtree.c:173-178`), and `KD_CAPATHS` is krb5.conf's `[capaths]` in one
+  line: entries separated by semicolons, each `client>server=hop[,hop...]`,
+  with a lone `.` for a direct trust. The `.` comes straight across because
+  upstream uses it — its profile routines cannot hold an empty value — so a
+  `[capaths]` section can be transcribed without reinterpretation.
+  Configuration *replaces* the hierarchical guess rather than adding to it,
+  which is upstream's order too.
+- **A client is handed an intermediate rather than refused.** Asked for a
+  trust this realm does not hold, the KDC walks the path it knows and offers
+  the furthest hop it can actually make (`find_alternate_tgs`,
+  `do_tgs_req.c:371`) — the client then asks again from there. A finding came
+  out of testing it: the hierarchical walk from a realm always begins with
+  that realm's immediate parent, so a realm holding a trust with its parent
+  has *something* to offer towards everywhere, and the dead end is found
+  further along rather than at the first hop. The C KDC was asked and behaves
+  identically.
+- **No host-based referral.** `find_referral_tgs` (`do_tgs_req.c:487-523`)
+  answers a client that asked for `host/www.example.com` in the wrong realm by
+  naming the realm to ask instead, which needs a host-to-realm map — a
+  `[domain_realm]` equivalent, and a configuration surface this project does
+  not have. A request for an ordinary service that does not exist is
+  `S_PRINCIPAL_UNKNOWN`, as it is upstream when its own lookup comes up
+  empty.
 
 **The AS exchange:**
 
@@ -657,6 +678,24 @@ tests. It is green.
   mismatched client name, a stale clock, and a request asking for a flag its
   TGT does not carry. Each asserts the *specific* protocol error, because
   they are different codes and a client acts on them differently.
+- **Configured realm paths** — covered against upstream's own documented
+  example (`walk_rtree.c:186-210`), transcribed rather than invented, plus the
+  properties that matter: that configuration *replaces* the hierarchical guess
+  rather than adding to it, that an unconfigured pair still gets the
+  hierarchy, that a direct entry is not the same as no entry, and that a
+  malformed entry is a configuration error rather than something discovered
+  later when a ticket is refused for no visible reason. The KDC's own tests
+  then check it is consulted at all, by routing a configured path *around* the
+  realm a ticket really came through and requiring the refusal, then naming
+  the real realm and requiring the same request to succeed.
+- **The alternate-TGS search** — covered in process and differentially, and
+  the in-process case records a finding: the hierarchical walk from a realm
+  always begins with that realm's immediate parent, so any realm holding a
+  trust with its parent has something to offer towards *everywhere*. Asked for
+  a trust with an unrelated realm, the far realm answers with its parent's TGT
+  and lets the client find the dead end further along — and the C KDC was
+  asked and does exactly the same, so the case that can refuse is driven from
+  a realm with no trust along the path at all.
 - **The transited field** — covered against upstream's own vectors and then
   differentially. `lib/krb5/krb/transit-tests` is nine published expansion
   cases, including two that must be *refused*, and the comparison is of

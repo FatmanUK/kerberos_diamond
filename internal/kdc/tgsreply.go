@@ -104,6 +104,15 @@ func (s *tgsState) issuedFor() wire.PrincipalName {
 	if opts&(wire.OptValidate|wire.OptRenew) != 0 {
 		return s.headerSrv
 	}
+	// A referral names what was *found* rather than what was
+	// asked for, and only a referral does. Upstream uses the
+	// request's name otherwise even though it has the database
+	// entry's in hand (do_tgs_req.c:1029), which matters because
+	// the two can differ in their name type and the client
+	// compares what it sent.
+	if s.referral {
+		return s.serverName
+	}
 	return *s.req.Body.SName
 }
 

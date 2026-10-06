@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
 
@@ -252,4 +253,115 @@ func TestStockKvnoTwoHopsAgainstTheGoKDC(t *testing.T) {
 			MidRealm, out)
 	}
 	assertSpentAtTheShim(t, out)
+}
+
+// TestAlternateTGSMatchesTheC is the differential test for the
+// referral a KDC offers when the trust asked for does not exist.
+//
+// It is the one case here addressed to a realm other than this one,
+// and it has to be: the search runs where the *client* asks from,
+// which is the far end of a path. So both implementations stand up as
+// the far realm and answer the same request.
+func TestAlternateTGSMatchesTheC(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 30*time.Second)
+	defer cancel()
+
+	g := realmTGT(t, ctx, o, FarRealm, FarUser, FarPassword)
+	msg := signTGSReqAs(t, g, farToLocalBody(), FarRealm,
+		FarUser)
+
+	cRaw, err := o.SendRaw(ctx, msg)
+	if err != nil {
+		t.Fatalf("asking the C KDC: %v", err)
+	}
+	cx := openCrossTGT(t, cRaw, g)
+
+	d := diamond(t, "kd_golden_alttgs",
+		pinned(cx.Enc.EffectiveStartTime()))
+	far := asFarRealm(d, pinned(cx.Enc.EffectiveStartTime()))
+	goRaw, err := far.Handle(msg)
+	if err != nil {
+		t.Fatalf("asking the Go KDC: %v", err)
+	}
+	gx := openCrossTGT(t, goRaw, g)
+
+	assertAlternate(t, "oracle", cx)
+	assertAlternate(t, "diamond", gx)
+	reportDiffs(t, cx, gx, fastExemptions()...)
+}
+
+// farToLocalBody asks the far realm for a trust with this one, which
+// it does not hold: it holds one with the middle realm only, so the
+// answer must name the middle realm.
+func farToLocalBody() wire.KDCReqBody {
+	return wire.KDCReqBody{
+		Options: wire.OptForwardable | wire.OptRenewableOK,
+		Realm:   FarRealm,
+		SName: &wire.PrincipalName{
+			Type:       wire.NTSrvInst,
+			Components: []string{"krbtgt", Realm},
+		},
+		Till:  in(requestedLife),
+		Nonce: 0x5A,
+		EType: []int32{
+			int32(crypto.AES256CTSHMACSHA196),
+			int32(crypto.AES128CTSHMACSHA196),
+		},
+	}
+}
+
+// asFarRealm builds a Go KDC serving the far realm over the same
+// store.
+func asFarRealm(d *Diamond, now func() time.Time) *kdc.KDC {
+	return &kdc.KDC{
+		Store:     d.Store,
+		Realm:     FarRealm,
+		ClockSkew: 5 * time.Minute,
+		Now:       now,
+	}
+}
+
+// openCrossTGT decodes a reply whose ticket is a cross-realm
+// ticket-granting ticket, opened with the inter-realm key the far and
+// middle realms share.
+func openCrossTGT(t *testing.T, raw []byte, g tgt) Exchange {
+	t.Helper()
+	rep := decodeTGSRep(t, raw)
+	enc := decryptPart(t, rep.EncPart, g.session,
+		crypto.UsageTGSRepEncPartSessKey)
+	tkt := decryptIn(t, rep.Ticket.EncPart, FarRealm,
+		FarMidPassword, []string{"krbtgt", MidRealm},
+		crypto.UsageKDCRepTicket)
+	return Exchange{
+		Rep: rep,
+		Enc: decodeEncPart(t, enc),
+		Tkt: decodeTktPart(t, tkt),
+	}
+}
+
+// assertAlternate checks the reply offers the middle realm rather
+// than the realm asked for, in both halves.
+func assertAlternate(t *testing.T, side string, x Exchange) {
+	t.Helper()
+	want := "krbtgt/" + MidRealm
+	if got := x.Rep.Ticket.SName.String(); got != want {
+		t.Errorf("%s: the ticket names %q, want %q",
+			side, got, want)
+	}
+	// The sealed half has to agree with the ticket, or a client
+	// would cache the credential under the name it asked for and
+	// present it to the wrong realm.
+	if got := x.Enc.SName.String(); got != want {
+		t.Errorf("%s: the reply names %q, want %q",
+			side, got, want)
+	}
+	if x.Enc.SRealm != FarRealm {
+		t.Errorf("%s: the reply's server realm is %q",
+			side, x.Enc.SRealm)
+	}
+	if len(x.Enc.Key.KeyValue) == 0 {
+		t.Errorf("%s: reply carries no session key", side)
+	}
 }

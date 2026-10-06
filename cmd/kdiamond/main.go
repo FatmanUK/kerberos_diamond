@@ -178,6 +178,7 @@ func routes(
 		Store:     s,
 		Realm:     c.Realm,
 		ClockSkew: c.ClockSkew,
+		Paths:     c.Paths,
 	}
 	mux := http.NewServeMux()
 	mux.Handle(transport.HealthPath, &transport.Health{

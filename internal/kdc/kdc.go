@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/kerberos_diamond/internal/transit"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
 
@@ -43,6 +44,11 @@ type KDC struct {
 	// means no cap, matching realm_maxlife.
 	MaxLife          time.Duration
 	MaxRenewableLife time.Duration
+
+	// Paths are the configured realm paths, krb5.conf's [capaths]
+	// by another spelling. Nil means none, and then every path is
+	// decided by the realm-naming hierarchy.
+	Paths transit.Paths
 }
 
 // The realm-wide lifetime defaults, from k5-int.h:132-133 by way of

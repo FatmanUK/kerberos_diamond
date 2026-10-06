@@ -154,7 +154,51 @@ func provision(
 			return err
 		}
 	}
-	return provisionTrust(ctx, s, mkey)
+	if err := provisionTrust(ctx, s, mkey); err != nil {
+		return err
+	}
+	return provisionFarRealm(ctx, s, mkey)
+}
+
+// provisionFarRealm adds the far realm's own principals, so that a Go
+// KDC can be stood up *as* that realm.
+//
+// Only one case needs it, and it needs it for a reason worth stating:
+// the alternate-TGS search runs at the realm a client asks from,
+// which is the far end of a path and never the near one. Comparing it
+// means both implementations answering a request addressed to the far
+// realm.
+//
+// A principal's key in the store is its fully qualified name, so two
+// realms in one database never collide.
+func provisionFarRealm(
+	ctx context.Context,
+	s *store.Store,
+	mkey store.MasterKey,
+) error {
+	type entry struct {
+		components []string
+		password   string
+		kvno       int32
+	}
+	for _, e := range []entry{
+		{[]string{FarUser}, FarPassword, 1},
+		// The krbtgt is at TgtKVNO because the fixture's cpw
+		// bumped it there, as it does in every realm.
+		{[]string{"krbtgt", FarRealm}, FarTGTPassword,
+			TgtKVNO},
+		{[]string{"krbtgt", MidRealm}, FarMidPassword, 1},
+	} {
+		p := store.NewPrincipal(FarRealm, e.components)
+		err := p.SetPassword(mkey, e.password, e.kvno)
+		if err != nil {
+			return err
+		}
+		if err := s.Save(ctx, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // provisionTrust adds the inter-realm key, which is the whole of a
