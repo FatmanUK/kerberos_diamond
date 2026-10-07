@@ -9,13 +9,13 @@ import (
 // key and a copy of its contents sealed under the client's.
 //
 // This is the tail of finish_process_as_req (do_as_req.c:231-328)
-// with the FAST, authdata and audit paths left out.
+// with the FAST, authdata and audit paths left out. The order is
+// forced by FAST and would otherwise be arbitrary: the ticket first
+// because the tunnel's finished field checksums it, the tunnel next
+// because it both moves the reply's padata inside and decides the key
+// the enc-part is sealed with, and the enc-part last for that reason.
 func (k *KDC) assemble(s *asState) (*wire.ASRep, error) {
 	tkt, err := k.ticket(s)
-	if err != nil {
-		return nil, err
-	}
-	enc, err := k.encPart(s)
 	if err != nil {
 		return nil, err
 	}
@@ -23,13 +23,43 @@ func (k *KDC) assemble(s *asState) (*wire.ASRep, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &wire.ASRep{
-		PAData:  pa,
-		CRealm:  k.Realm,
-		CName:   s.cname,
-		Ticket:  *tkt,
-		EncPart: *enc,
-	}, nil
+	rep := &wire.ASRep{
+		PAData: pa,
+		CRealm: k.Realm,
+		CName:  s.cname,
+		Ticket: *tkt,
+	}
+	if err := k.wrapASReply(s, rep); err != nil {
+		return nil, err
+	}
+	enc, err := k.encPart(s)
+	if err != nil {
+		return nil, err
+	}
+	rep.EncPart = *enc
+	return rep, nil
+}
+
+// wrapASReply puts the reply in its tunnel, if the request came
+// through one, and replaces the reply key with the strengthened one.
+func (k *KDC) wrapASReply(
+	s *asState,
+	rep *wire.ASRep,
+) error {
+	if s.fast == nil {
+		return nil
+	}
+	der, err := wire.MarshalTicket(rep.Ticket)
+	if err != nil {
+		return err
+	}
+	key, err := k.fastReply(s.fast, rep, der, s.req.Body.Nonce,
+		s.replyKey, s.clientEType)
+	if err != nil {
+		return err
+	}
+	s.replyKey = key
+	return nil
 }
 
 // replyPAData is the padata every successful AS-REP carries.
@@ -144,7 +174,7 @@ func (k *KDC) encPart(s *asState) (*wire.EncryptedData, error) {
 	if err != nil {
 		return nil, err
 	}
-	ct, err := p.Encrypt(s.clientKey, plain,
+	ct, err := p.Encrypt(s.replyKey, plain,
 		crypto.UsageASRepEncPart)
 	if err != nil {
 		return nil, err
@@ -198,7 +228,12 @@ func (k *KDC) encPAData(s *asState) ([]wire.PAData, error) {
 	if err != nil {
 		return nil, err
 	}
-	sum, err := p.Checksum(s.clientKey, s.raw, crypto.UsageASReq)
+	// Keyed with the *strengthened* key, because upstream
+	// computes this after kdc_fast_handle_reply_key has run
+	// (do_as_req.c:312-318). A client verifies it with the key it
+	// decrypted the reply with, so the unstrengthened one would
+	// fail there and look like a tampered reply.
+	sum, err := p.Checksum(s.replyKey, s.raw, crypto.UsageASReq)
 	if err != nil {
 		return nil, err
 	}

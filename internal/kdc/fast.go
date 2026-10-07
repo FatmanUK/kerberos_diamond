@@ -113,32 +113,26 @@ func (k *KDC) tgsArmorKey(
 	return &fastState{armor: armor, p: sp}, 0, ""
 }
 
-// openFast decrypts the tunnel, verifies the checksum that binds it
-// to the outer request, and substitutes the inner request for the
-// outer one (fast_util.c:186-235).
+// openFast decrypts the TGS tunnel and substitutes the inner request
+// for the outer one.
 func (k *KDC) openFast(
 	s *tgsState,
 	f *fastState,
 	ar wire.KrbFastArmoredReq,
 ) (int32, string) {
-	plain, err := f.p.Decrypt(f.armor, ar.EncPart.Cipher,
-		crypto.UsageFASTEnc)
-	if err != nil {
-		return wire.ErrCodeBadIntegrity, "DECRYPT FAST REQ"
+	// The checksummed data is the PA-TGS-REQ value, not the
+	// req-body: upstream's own comment names both cases --
+	// "either the pa-tgs-req or the kdc-req-body"
+	// (fast_util.c:120-124) -- and this path passes the AP-REQ
+	// bytes (do_tgs_req.c:633-634).
+	ap := findPAData(s.req.PAData, wire.PATGSReq)
+	if ap == nil {
+		return wire.ErrCodePADataTypeNoSupp, "NO AP-REQ"
 	}
-	fr, err := wire.UnmarshalKrbFastReq(plain)
-	if err != nil {
-		return wire.ErrCodeModified, "DECODE FAST REQUEST"
-	}
-	code, status := f.bindToOuter(s, ar.ReqChecksum)
+	fr, code, status := f.openInner(ar, ap.Value)
 	if code != 0 {
 		return code, status
 	}
-	if fr.Options&wire.FastCriticalOptions != 0 {
-		return wire.ErrCodeUnknownCriticalOpt,
-			"UNSUPPORTED CRITICAL FAST OPTION"
-	}
-	f.options = fr.Options
 	s.fast = f
 	// The inner request replaces the outer one entirely, padata
 	// included (fast_util.c:229-234). That is the whole point:
@@ -149,23 +143,39 @@ func (k *KDC) openFast(
 	return 0, ""
 }
 
-// bindToOuter verifies the checksum that ties the tunnel to the outer
-// request.
+// openInner is the part both exchanges share: decrypt the tunnel,
+// decode what is inside, check it is bound to the outer request, and
+// refuse a critical option this KDC does not implement
+// (fast_util.c:186-228).
 //
-// The checksummed data is the PA-TGS-REQ value, not the req-body:
-// upstream's own comment names both cases -- "either the pa-tgs-req
-// or the kdc-req-body" (fast_util.c:120-124) -- and the TGS path
-// passes the AP-REQ bytes (do_tgs_req.c:633-634). That is what stops
-// a recorded tunnel being replayed against a different AP-REQ.
-func (f *fastState) bindToOuter(
-	s *tgsState,
-	sum wire.Checksum,
-) (int32, string) {
-	ap := findPAData(s.req.PAData, wire.PATGSReq)
-	if ap == nil {
-		return wire.ErrCodePADataTypeNoSupp, "NO AP-REQ"
+// checksummed is what the request checksum covers, and it is the one
+// thing the two paths disagree about.
+func (f *fastState) openInner(
+	ar wire.KrbFastArmoredReq,
+	checksummed []byte,
+) (wire.KrbFastReq, int32, string) {
+	var zero wire.KrbFastReq
+	plain, err := f.p.Decrypt(f.armor, ar.EncPart.Cipher,
+		crypto.UsageFASTEnc)
+	if err != nil {
+		return zero, wire.ErrCodeBadIntegrity,
+			"DECRYPT FAST REQ"
 	}
-	return f.checkCksum(sum, ap.Value)
+	fr, err := wire.UnmarshalKrbFastReq(plain)
+	if err != nil {
+		return zero, wire.ErrCodeModified,
+			"DECODE FAST REQUEST"
+	}
+	code, status := f.checkCksum(ar.ReqChecksum, checksummed)
+	if code != 0 {
+		return zero, code, status
+	}
+	if fr.Options&wire.FastCriticalOptions != 0 {
+		return zero, wire.ErrCodeUnknownCriticalOpt,
+			"UNSUPPORTED CRITICAL FAST OPTION"
+	}
+	f.options = fr.Options
+	return fr, 0, ""
 }
 
 // checkCksum verifies the checksum binding the tunnel to the outer
@@ -335,10 +345,19 @@ func (k *KDC) fastError(
 	cname *wire.PrincipalName,
 ) *wire.KRBError {
 	e := k.krbError(code, status, cname)
-	if s.fast == nil {
+	return k.wrapErr(s.fast, e, s.req.Body.Nonce)
+}
+
+// wrapErr is the part both exchanges share.
+func (k *KDC) wrapErr(
+	f *fastState,
+	e *wire.KRBError,
+	nonce int32,
+) *wire.KRBError {
+	if f == nil {
 		return e
 	}
-	data, err := s.fast.wrapError(e, s.req.Body.Nonce)
+	data, err := f.wrapError(e, nonce)
 	if err != nil {
 		return e
 	}

@@ -34,6 +34,14 @@ const (
 	UsageTGSReqAuthCksum Usage = 6
 	UsageTGSReqAuth      Usage = 7
 
+	// UsageAPReqAuth encrypts an ordinary application AP-REQ's
+	// authenticator (krb5.hin:954). It is distinct from
+	// UsageTGSReqAuth, and FAST is where that distinction becomes
+	// load-bearing: the AP-REQ a client puts in a FAST armor
+	// field is an application one, so its authenticator is at 11
+	// even though it reaches the KDC inside a KDC request.
+	UsageAPReqAuth Usage = 11
+
 	// UsageTGSRepEncPartSessKey and UsageTGSRepEncPartSubKey
 	// encrypt a TGS-REP's enc-part. Which one applies depends on
 	// whether the client put a subkey in its authenticator, and

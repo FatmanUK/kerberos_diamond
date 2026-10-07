@@ -41,6 +41,26 @@ type asState struct {
 	clientEType crypto.EncType
 	clientKVNO  int32
 
+	// replyKey is what the reply's enc-part is actually sealed
+	// with. It is the client's long-term key unless FAST
+	// strengthened it, and the two are kept apart because the
+	// reply still *advertises* the client key's enctype and key
+	// version either way (do_as_req.c:310,330) -- the
+	// strengthened key is derived from it and so shares its
+	// enctype.
+	replyKey []byte
+
+	// fast is the FAST tunnel this request arrived through, or
+	// nil if it arrived in the open.
+	fast *fastState
+
+	// challengeKey is the client long-term key an encrypted
+	// challenge was proved with, kept so the reply can answer in
+	// kind. It is not necessarily the key the reply is encrypted
+	// under: a client may prove with one kvno and expect the
+	// reply under the current one.
+	challengeKey []byte
+
 	serverKey   []byte
 	serverKVNO  int32
 	serverEType crypto.EncType
@@ -68,31 +88,44 @@ func (k *KDC) AS(
 	req wire.ASReq,
 ) (*wire.ASRep, *wire.KRBError) {
 	s := &asState{req: req, raw: msg, now: stamp(k.now())}
+	if code, status := k.findFastAS(s); code != 0 {
+		return nil, k.fastErrorAS(s, code, status)
+	}
 	if code, status := k.principals(s); code != 0 {
-		return nil, k.krbError(code, status, s.nameOrNil())
+		return nil, k.fastErrorAS(s, code, status)
 	}
 	code, status := k.validateASRequest(
 		req, s.client, s.server, s.now)
 	if code != 0 {
-		return nil, k.krbError(code, status, s.nameOrNil())
+		return nil, k.fastErrorAS(s, code, status)
 	}
 	if code, status := k.keys(s); code != 0 {
-		return nil, k.krbError(code, status, s.nameOrNil())
+		return nil, k.fastErrorAS(s, code, status)
 	}
 	if e := k.preauth(s); e != nil {
-		return nil, e
+		return nil, k.wrapErr(s.fast, e, s.req.Body.Nonce)
 	}
 	k.times(s)
 	if err := k.sessionKey(s); err != nil {
-		return nil, k.krbError(wire.ErrCodeGeneric,
-			"MAKE_SESSION_KEY", s.nameOrNil())
+		return nil, k.fastErrorAS(s, wire.ErrCodeGeneric,
+			"MAKE_SESSION_KEY")
 	}
 	rep, err := k.assemble(s)
 	if err != nil {
-		return nil, k.krbError(wire.ErrCodeGeneric,
-			"ENCODE_REPLY", s.nameOrNil())
+		return nil, k.fastErrorAS(s, wire.ErrCodeGeneric,
+			"ENCODE_REPLY")
 	}
 	return rep, nil
+}
+
+// fastErrorAS is krbError, wrapped in the tunnel when there is one.
+func (k *KDC) fastErrorAS(
+	s *asState,
+	code int32,
+	status string,
+) *wire.KRBError {
+	e := k.krbError(code, status, s.nameOrNil())
+	return k.wrapErr(s.fast, e, s.req.Body.Nonce)
 }
 
 func (s *asState) nameOrNil() *wire.PrincipalName {
@@ -159,6 +192,9 @@ func (k *KDC) keys(s *asState) (int32, string) {
 		}
 		s.clientKey, s.clientKVNO = key, row.KVNO
 		s.clientEType = crypto.EncType(e)
+		// The reply key starts as the client key and stays so
+		// unless FAST strengthens it.
+		s.replyKey = key
 		break
 	}
 	if s.clientKey == nil {
