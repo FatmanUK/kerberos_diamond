@@ -39,17 +39,21 @@ harness](#the-differential-harness) below.
   `kadmin`.
 - **MS-KKDCP over HTTPS** as the only transport, with `kdiamond-proxy` for
   clients built without a TLS module.
+- **FAST** (RFC 6113), both exchanges, with the encrypted-challenge factor —
+  so pre-authentication here resists an offline dictionary attack, which
+  plain `PA-ENC-TIMESTAMP` does not. A stock `kinit -T` proves it. One
+  limitation is the protocol's rather than this implementation's: FAST cannot
+  protect a client's *first* exchange, because armoring needs a ticket the
+  client does not yet have.
 
 ## What does not
 
-- **FAST** (RFC 6113). The primitives are in — the enctype pseudo-random
-  function, `PRF+` and `KRB-FX-CF2` — and the armored exchange is not. The
-  KDC does not advertise FAST, deliberately: a client told it was available
-  and then refused it would be a broken deployment.
 - **The Windows PAC**, **S4U2Self** and **S4U2Proxy**. A stock KDC puts a
   signed PAC in every ticket; this issues none.
 - **A `kadmin` protocol.** Provisioning needs a shell on the KDC's machine.
 - **The host-based referral**, which needs a `[domain_realm]` equivalent.
+- **Anonymous PKINIT**, which is the only way to armor a client's first
+  exchange with FAST — see the limitation above.
 - **DES, 3DES, RC4 and Camellia.** Not planned.
 
 `BOOTSTRAP.md` §2 is the live list of what comes next, and §3.3 records every
@@ -241,7 +245,11 @@ because each is load-bearing and each is a conclusion rather than a choice:
 
 It earns its keep. On its first run it found four divergences nobody had
 spotted by reading the C, and the stock `kinit` found a fifth the
-field-by-field diff could not see. `BOOTSTRAP.md` §6 lists every one.
+field-by-field diff could not see. It has kept finding them since; the most
+recent came from *deleting* its last declared exemption, which had been
+quietly waiving two fields in every comparison. `BOOTSTRAP.md` §6 lists them.
+
+There are no exemptions now. Every field of every case is compared.
 
 ## Layout
 
