@@ -38,6 +38,10 @@ type tgsState struct {
 	replyEType crypto.EncType
 	replyUsage crypto.Usage
 
+	// fast is the FAST tunnel this request arrived through, or
+	// nil if it arrived in the open.
+	fast *fastState
+
 	// stkt is the request's second ticket, decrypted, and stktSrv
 	// the principal it names. Both are nil unless the options
 	// asked for user-to-user.
@@ -87,25 +91,28 @@ func (k *KDC) TGS(
 		return nil, k.krbError(code, status, nil)
 	}
 	cname := s.header.CName
+	if code, status := k.findFastTGS(s); code != 0 {
+		return nil, k.fastError(s, code, status, &cname)
+	}
 	if code, status := k.tgsServer(s); code != 0 {
-		return nil, k.krbError(code, status, &cname)
+		return nil, k.fastError(s, code, status, &cname)
 	}
 	if code, status := k.readSecondTicket(s); code != 0 {
-		return nil, k.krbError(code, status, &cname)
+		return nil, k.fastError(s, code, status, &cname)
 	}
 	if code, status := k.buildTransited(s); code != 0 {
-		return nil, k.krbError(code, status, &cname)
+		return nil, k.fastError(s, code, status, &cname)
 	}
 	if code, status := k.tgsPolicy(s); code != 0 {
-		return nil, k.krbError(code, status, &cname)
+		return nil, k.fastError(s, code, status, &cname)
 	}
 	k.tgsTimes(s)
 	if code, status := k.tgsSessionKey(s); code != 0 {
-		return nil, k.krbError(code, status, &cname)
+		return nil, k.fastError(s, code, status, &cname)
 	}
 	rep, err := k.tgsAssemble(s)
 	if err != nil {
-		return nil, k.krbError(wire.ErrCodeGeneric,
+		return nil, k.fastError(s, wire.ErrCodeGeneric,
 			"ENCODE_REPLY", &cname)
 	}
 	return rep, nil

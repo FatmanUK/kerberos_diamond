@@ -6,24 +6,62 @@ import (
 )
 
 // tgsAssemble builds the TGS-REP, from do_tgs_req.c:1050-1120.
+//
+// The order is forced by FAST and would otherwise be arbitrary. The
+// ticket comes first because the tunnel's finished field checksums
+// it; the tunnel comes next because it both moves the reply's padata
+// inside and decides the key the enc-part is sealed with; the
+// enc-part comes last for that reason.
 func (k *KDC) tgsAssemble(s *tgsState) (*wire.TGSRep, error) {
 	tkt, err := k.tgsTicket(s)
 	if err != nil {
+		return nil, err
+	}
+	// A TGS-REP carries no cleartext padata of its own.
+	// return_padata's etype-info is an AS-only thing -- it
+	// describes the client's long-term key, which a TGS exchange
+	// never touches -- so the only thing that ever appears here
+	// is the FAST container.
+	rep := &wire.TGSRep{
+		CRealm:  s.header.CRealm,
+		CName:   s.header.CName,
+		Ticket:  *tkt,
+		EncPart: wire.EncryptedData{},
+	}
+	if err := k.wrapTGSReply(s, rep); err != nil {
 		return nil, err
 	}
 	enc, err := k.tgsEncPart(s)
 	if err != nil {
 		return nil, err
 	}
-	// A TGS-REP carries no cleartext padata. return_padata's
-	// etype-info is an AS-only thing -- it describes the client's
-	// long-term key, which a TGS exchange never touches.
-	return &wire.TGSRep{
-		CRealm:  s.header.CRealm,
-		CName:   s.header.CName,
-		Ticket:  *tkt,
-		EncPart: *enc,
-	}, nil
+	rep.EncPart = *enc
+	return rep, nil
+}
+
+// wrapTGSReply puts the reply in its tunnel, if the request came
+// through one, and replaces the reply key with the strengthened one.
+//
+// It is a no-op for an unarmored request, which is the shape of
+// upstream's `if (!state->armor_key) return 0;` at fast_util.c:291.
+func (k *KDC) wrapTGSReply(
+	s *tgsState,
+	rep *wire.TGSRep,
+) error {
+	if s.fast == nil {
+		return nil
+	}
+	der, err := wire.MarshalTicket(rep.Ticket)
+	if err != nil {
+		return err
+	}
+	key, err := k.fastReply(s.fast, rep, der, s.req.Body.Nonce,
+		s.replyKey, s.replyEType)
+	if err != nil {
+		return err
+	}
+	s.replyKey = key
+	return nil
 }
 
 // tgsTicket seals the new ticket under the service's key.

@@ -293,11 +293,31 @@ func padataSummary(ps []wire.PAData) string {
 	}
 	parts := make([]string, len(ps))
 	for i, p := range ps {
+		if p.Type == wire.PAFXFast && len(p.Value) > 0 {
+			parts[i] = "type=136,len=<fast>"
+			continue
+		}
 		parts[i] = fmt.Sprintf("type=%d,len=%d",
 			p.Type, len(p.Value))
 	}
 	return strings.Join(parts, " ")
 }
+
+// A non-empty PA-FX-FAST is the one padata element whose length is
+// not deterministic, and it is elided for that reason alone -- every
+// other element's length is still compared, including an *empty*
+// PA-FX-FAST, which is the advertisement and whose length is always
+// nought.
+//
+// The reason is one field. A KrbFastResponse's finished part carries
+// a microsecond count as a DER INTEGER, whose width is one to three
+// octets depending on the value, so the ciphertext around it changes
+// length with the clock. Observed directly: five runs of the armored
+// TGS comparison gave the C KDC 199, 199, 199, 199 and then 198
+// octets for the same exchange. Every other ciphertext in this
+// harness has a deterministic length -- only the confounder inside it
+// varies -- which is why comparing lengths is worth doing at all and
+// why this exception needs naming rather than a blanket elision.
 
 // rawField renders a field this harness carries as opaque DER.
 //

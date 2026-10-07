@@ -160,6 +160,22 @@ func sealAuthenticator(
 	crealm, cname string,
 ) []byte {
 	t.Helper()
+	return sealAuthenticatorSub(t, p, session, bodyDER,
+		crealm, cname, nil)
+}
+
+// sealAuthenticatorSub is the same with a subkey, which a
+// FAST-armored request needs: the subkey is one of the two inputs to
+// the armor key, and it is what makes that key fresh rather than as
+// old as the ticket.
+func sealAuthenticatorSub(
+	t *testing.T,
+	p *crypto.EncProfile,
+	session, bodyDER []byte,
+	crealm, cname string,
+	sub []byte,
+) []byte {
+	t.Helper()
 	sum, err := p.Checksum(session, bodyDER,
 		crypto.UsageTGSReqAuthCksum)
 	if err != nil {
@@ -176,8 +192,9 @@ func sealAuthenticator(
 			Type:     int32(p.RequiredCksum),
 			Checksum: sum,
 		},
-		CUsec: 1234,
-		CTime: now,
+		CUsec:  1234,
+		CTime:  now,
+		SubKey: subKeyOf(p, sub),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -187,6 +204,19 @@ func sealAuthenticator(
 		t.Fatal(err)
 	}
 	return ct
+}
+
+// subKeyOf renders a subkey, or nil when there is none.
+func subKeyOf(
+	p *crypto.EncProfile,
+	sub []byte,
+) *wire.EncryptionKey {
+	if sub == nil {
+		return nil
+	}
+	return &wire.EncryptionKey{
+		KeyType: int32(p.EncType), KeyValue: sub,
+	}
 }
 
 // openTGS decrypts a TGS-REP into an Exchange.
@@ -407,7 +437,37 @@ func TestStockKvnoAgainstTheGoKDC(t *testing.T) {
 		t.Errorf("kvno did not report the key version:\n%s",
 			out)
 	}
+	assertArmored(t, out)
 	assertServiceTicket(t, ctx, o, env, service)
+}
+
+// assertArmored checks the exchange went through a FAST tunnel.
+//
+// It is not optional decoration. A stock client armors *every* TGS
+// request unconditionally -- krb5int_fast_tgs_armor is called from
+// lib/krb5/krb/send_tgs.c:178 with no gate on any advertisement --
+// and a client tolerates a reply that ignores it, because
+// lib/krb5/krb/decode_kdc.c:65-66 maps KRB5_ERR_FAST_REQUIRED back to
+// success. So this KDC answered armored requests as if the padata
+// were absent for as long as the TGS exchange has existed, and every
+// test here passed. Without these three lines it would go on passing.
+//
+// "FAST reply key" is the one that matters most: the client only logs
+// it after it has verified the finished field, checked the ticket
+// checksum under the armor key, matched the nonce and combined the
+// strengthen key. It is the whole chain in one assertion.
+func assertArmored(t *testing.T, trace string) {
+	t.Helper()
+	for _, want := range []string{
+		"Encoding request body and padata into FAST request",
+		"Decoding FAST response",
+		"FAST reply key",
+	} {
+		if !strings.Contains(trace, want) {
+			t.Errorf("the trace has no %q:\n%s",
+				want, trace)
+		}
+	}
 }
 
 // assertServiceTicket checks klist lists the service ticket beside
