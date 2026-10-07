@@ -47,4 +47,20 @@ const (
 	// It is 56, far from the others, and is listed separately in
 	// the header for that reason (krb5.hin:1000).
 	UsageASReq Usage = 56
+
+	// The RFC 6113 usages (krb5.hin:994-999). Four for the tunnel
+	// itself and two for the encrypted-challenge factor inside
+	// it, one per direction -- a challenge and its answer must
+	// not be interchangeable.
+	UsageFASTReqCksum   Usage = 50
+	UsageFASTEnc        Usage = 51
+	UsageFASTRep        Usage = 52
+	UsageFASTFinished   Usage = 53
+	UsageEncChallClient Usage = 54
+	UsageEncChallKDC    Usage = 55
+
+	// UsagePAFXCookie is far out of the sequence because the
+	// cookie is MIT's own extension rather than part of RFC 6113
+	// (krb5.hin:1006).
+	UsagePAFXCookie Usage = 513
 )

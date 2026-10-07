@@ -434,3 +434,25 @@ const refKDCReqBody = "" +
 	" 23 A0 03 02 01 00 A1 03 02 01 05 A2 17 04 15" +
 	" 6B 72 62 41 53 4E 2E 31 20 74 65 73 74 20 6D" +
 	" 65 73 73 61 67 65"
+
+// refFastResponse is encode_krb5_fast_response. Every field is
+// present, including both OPTIONALs, so this one fixture pins
+// KrbFastResponse, the embedded KrbFastFinished and the strengthen
+// key at once.
+const refFastResponse = "30 81 9F A0 26 30 24 30 10 A1 03 " +
+	"02 01 0D A2 09 04 07 70 61 2D 64 61 74 61 30 10 A1 03 " +
+	"02 01 0D A2 09 04 07 70 61 2D 64 61 74 61 A1 13 30 11 " +
+	"A0 03 02 01 01 A1 0A 04 08 31 32 33 34 35 36 37 38 A2 " +
+	"5B 30 59 A0 11 18 0F 31 39 39 34 30 36 31 30 30 36 30 " +
+	"33 31 37 5A A1 05 02 03 01 E2 40 A2 10 1B 0E 41 54 48 " +
+	"45 4E 41 2E 4D 49 54 2E 45 44 55 A3 1A 30 18 A0 03 02 " +
+	"01 01 A1 11 30 0F 1B 06 68 66 74 73 61 69 1B 05 65 78 " +
+	"74 72 61 A4 0F 30 0D A0 03 02 01 01 A1 06 04 04 31 32 " +
+	"33 34 A3 03 02 01 2A"
+
+// refPAFXFastReply is encode_krb5_pa_fx_fast_reply, which exists to
+// pin the double wrapper: A0 around the SEQUENCE, then [0] around the
+// EncryptedData inside it.
+const refPAFXFastReply = "A0 29 30 27 A0 25 30 23 A0 03 " +
+	"02 01 00 A1 03 02 01 05 A2 17 04 15 6B 72 62 41 53 4E " +
+	"2E 31 20 74 65 73 74 20 6D 65 73 73 61 67 65"

@@ -35,6 +35,14 @@ const (
 	ErrCodeMustUseUser2User   int32 = 27
 	ErrCodePathNotAccepted    int32 = 28
 	ErrCodeSvcUnavailable     int32 = 29
+
+	// The RFC 6113 codes. They sit far up the table with reserved
+	// placeholders either side, so they are counted from
+	// PREAUTH_REQUIRED rather than assumed
+	// (lib/krb5/error_tables/krb5_err.et).
+	ErrCodePreauthExpired     int32 = 90
+	ErrCodeMorePreauthData    int32 = 91
+	ErrCodeUnknownCriticalOpt int32 = 93
 	ErrCodeGeneric            int32 = 60
 )
 

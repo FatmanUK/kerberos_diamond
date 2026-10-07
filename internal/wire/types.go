@@ -185,6 +185,18 @@ const (
 	PAPACRequest   int32 = 128
 	PAFXCookie     int32 = 133
 	PAFXFast       int32 = 136
+
+	// PAFXError carries a KRB-ERROR *inside* a FAST reply, where
+	// the outer message is the refusal and this is the real one
+	// (RFC 6113; krb5.hin:1836). A client refuses a FAST error
+	// container that does not hold one.
+	PAFXError int32 = 137
+
+	// PAEncryptedChallenge is the only pre-authentication factor
+	// a FAST tunnel offers, because upstream refuses to offer
+	// PA-ENC-TIMESTAMP whenever an armor key exists
+	// (kdc/kdc_preauth_encts.c:38-43).
+	PAEncryptedChallenge int32 = 138
 )
 
 // derPAData's first context tag is 1, not 0. There is no [0] field at
