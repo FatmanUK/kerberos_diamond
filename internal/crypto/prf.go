@@ -112,7 +112,7 @@ func (p *EncProfile) PRFPlus(
 }
 
 // CF2 is KRB-FX-CF2 of RFC 6113 section 5.1 (krb5_c_fx_cf2_simple,
-// lib/crypto/krb/cf2.c:121-168):
+// lib/crypto/krb/cf2.c:123-168):
 //
 //	random-to-key(PRF+(k1, pepper1) XOR PRF+(k2, pepper2))
 //
@@ -127,17 +127,36 @@ func (p *EncProfile) PRFPlus(
 // which is why they are strings in the protocol rather than a
 // convention.
 //
-// The result takes k1's enctype, as upstream's does: it reads the
-// enctype off k1 and never looks at k2's.
+// **The second key carries its own profile, and that is the whole
+// reason this takes one.** Upstream reads the output length and the
+// result's enctype off k1 (cf2.c:139-146) but hands each key to
+// krb5_c_prfplus separately (:148 and :153), and krb5_c_prfplus looks
+// up the enctype of the key it was given (cf2.c:45). So the two PRF+
+// streams can run under different pseudo-random functions of
+// different block lengths while both produce k1's key length.
+//
+// The first version of this ran both streams under p, and it was
+// wrong in two ways. Against a shorter k2 it refused outright;
+// against a k2 of the same length but a different family --
+// aes256-cts-hmac-sha1-96 under aes256-cts-hmac-sha384-192, PRF
+// lengths 16 and 48 -- it returned thirty-two plausible bytes that no
+// peer would agree with. Nothing caught it because the armor paths
+// combine two keys of one enctype (krb5_generate_subkey copies the
+// base key's), and because every line of upstream's t_cf2.in uses one
+// enctype for both keys. Encrypted challenge is what reaches the
+// mixed case: the KDC combines the armor key with *every* long-term
+// key the client's request listed (kdc/kdc_preauth_ec.c:99-111).
 func (p *EncProfile) CF2(
 	k1 []byte, pepper1 string,
-	k2 []byte, pepper2 string,
+	p2 *EncProfile, k2 []byte, pepper2 string,
 ) ([]byte, error) {
 	a, err := p.PRFPlus(k1, []byte(pepper1), p.KeyLength)
 	if err != nil {
 		return nil, err
 	}
-	b, err := p.PRFPlus(k2, []byte(pepper2), p.KeyLength)
+	// p.KeyLength and not p2's: the output length belongs to the
+	// first key even when the second's PRF produces it.
+	b, err := p2.PRFPlus(k2, []byte(pepper2), p.KeyLength)
 	if err != nil {
 		return nil, err
 	}

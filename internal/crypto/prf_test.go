@@ -124,7 +124,7 @@ func TestCF2MatchesUpstreamsVectors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := p.CF2(k1, "a", k2, "b")
+		got, err := p.CF2(k1, "a", p, k2, "b")
 		if err != nil {
 			t.Errorf("%s: %v", p.Name, err)
 			continue
@@ -159,7 +159,7 @@ func TestCF2DependsOnThePeppers(t *testing.T) {
 		k1[i], k2[i] = byte(i), byte(255-i)
 	}
 	cf2 := func(a []byte, pa string, b []byte, pb string) []byte {
-		out, err := p.CF2(a, pa, b, pb)
+		out, err := p.CF2(a, pa, p, b, pb)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -241,4 +241,85 @@ func TestPRFRefusesAWrongKeyLength(t *testing.T) {
 	if _, err := p.PRF(make([]byte, 16), nil); err == nil {
 		t.Error("a 16-byte key was accepted for aes256")
 	}
+}
+
+// CF2 across two enctypes, which is the case upstream's vectors
+// cannot reach: every line of t_cf2.in uses one enctype for both
+// keys, so there is no published anchor and these assertions come
+// from reading cf2.c:139-153. The C read is the only authority until
+// a differential case drives a real encrypted-challenge key.
+//
+// It is reached in practice, which is why it matters: the KDC
+// combines the armor key with *every* long-term key a client's
+// request listed (kdc/kdc_preauth_ec.c:99-111), and a realm holding
+// all four enctypes mixes them on the second iteration.
+func TestCF2AcrossTwoEnctypes(t *testing.T) {
+	long, err := Profile(AES256CTSHMACSHA384192)
+	if err != nil {
+		t.Fatal(err)
+	}
+	short, err := Profile(AES128CTSHMACSHA196)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k1 := filled(long.KeyLength, 0x11)
+	k2 := filled(short.KeyLength, 0x22)
+
+	// A shorter second key is accepted. The first version of CF2
+	// refused this outright, because it ran k2's PRF+ under k1's
+	// profile and the length check rejected a 16-byte key.
+	out, err := long.CF2(k1, "a", short, k2, "b")
+	if err != nil {
+		t.Fatalf("a shorter second key was refused: %v", err)
+	}
+	// The output length belongs to the *first* key even when the
+	// second's pseudo-random function produces it.
+	if len(out) != long.KeyLength {
+		t.Errorf("got %d bytes, want %d",
+			len(out), long.KeyLength)
+	}
+	assertTheSecondProfileIsUsed(t, long, k1)
+}
+
+// assertTheSecondProfileIsUsed covers the dangerous case: two keys of
+// the *same* length in different families.
+//
+// aes256-cts-hmac-sha1-96 and aes256-cts-hmac-sha384-192 are both 32
+// bytes, so no length check can tell them apart, but their
+// pseudo-random functions produce 16 and 48 bytes respectively.
+// Running the second under the wrong profile returns plausible bytes
+// no peer agrees with, and nothing errors.
+func assertTheSecondProfileIsUsed(
+	t *testing.T,
+	long *EncProfile,
+	k1 []byte,
+) {
+	t.Helper()
+	sha1, err := Profile(AES256CTSHMACSHA196)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k3 := filled(sha1.KeyLength, 0x33)
+	right, err := long.CF2(k1, "a", sha1, k3, "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := long.CF2(k1, "a", long, k3, "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(right, wrong) {
+		t.Error("the second key's profile changed nothing, " +
+			"so one of the two PRFs is unused")
+	}
+}
+
+// filled is a key of a given length with a recognisable pattern, so a
+// failure message says which key it came from.
+func filled(n int, b byte) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = b ^ byte(i)
+	}
+	return out
 }
