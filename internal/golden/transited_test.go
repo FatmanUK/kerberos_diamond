@@ -147,7 +147,7 @@ func TestTransitedPathMatchesTheC(t *testing.T) {
 
 	assertTransited(t, "oracle", cx)
 	assertTransited(t, "diamond", gx)
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // assertTransited checks the middle realm was recorded and the path
@@ -289,7 +289,7 @@ func TestAlternateTGSMatchesTheC(t *testing.T) {
 
 	assertAlternate(t, "oracle", cx)
 	assertAlternate(t, "diamond", gx)
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // farToLocalBody asks the far realm for a trust with this one, which

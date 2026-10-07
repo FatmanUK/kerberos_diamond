@@ -219,7 +219,13 @@ func (k *KDC) tgsEncPAData(s *tgsState) ([]wire.PAData, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The empty PA-FX-FAST goes here too, after the checksum.
+	// return_enc_padata is one function called from both
+	// exchanges (do_tgs_req.c:1098, do_as_req.c:315), so a TGS
+	// reply advertises FAST exactly as an AS reply does -- see
+	// encPAData for what a client does with it.
 	return []wire.PAData{
 		{Type: wire.PAReqEncPARep, Value: der},
+		{Type: wire.PAFXFast},
 	}, nil
 }

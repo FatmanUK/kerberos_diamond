@@ -317,7 +317,7 @@ func TestFASTTGSExchangeMatchesTheC(t *testing.T) {
 	// standing exemption and nothing to do with this step; step 5
 	// removes both the advertisement gap and the exemption
 	// together.
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // The strengthened reply key is not the key the client started with,

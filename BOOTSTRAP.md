@@ -33,6 +33,12 @@ that have aged worst in the C:
   malformed frame, a padata-free single round trip, the PA-ENC-TIMESTAMP path,
   TCP-only transport, a TGT in the credential cache, and a wrong password
   being refused as a wrong password.
+- **FAST works, both exchanges, and a stock `kinit -T` proves it.** An
+  unmodified client authenticates through an armored tunnel against this KDC,
+  answering an encrypted challenge — which is the only pre-authentication
+  factor a tunnel has, because upstream refuses to offer a timestamp inside
+  one. A second case takes no `-T` at all on its first call and finds FAST
+  from the advertisement in its own cache. **The harness now waives nothing.**
 - **`internal/crypto` also has the pseudo-random function**, `PRF+` and
   `KRB-FX-CF2` — the primitives FAST combines keys with, so that an armor key
   belongs to neither party alone. All three are anchored: upstream asserts its
@@ -147,12 +153,8 @@ Everything the plan file listed is done, so this list is now the live one.
    user-to-user. Done, and they found three divergences between them; see §6.
 2. ~~**`[capaths]` and the alternate-TGS search.**~~ Done. Cross-realm is
    complete except for the host-based referral below.
-3. **FAST** (RFC 6113), which would also let the KDC stop declining to
-   advertise it — currently the harness's one declared exemption. The
-   primitives are in: `internal/crypto` has the enctype pseudo-random
-   function, `PRF+` and `KRB-FX-CF2`, all anchored to upstream's published
-   vectors. What is left is the wire types, the armored exchange and the
-   encrypted-challenge factor.
+3. ~~**FAST** (RFC 6113).~~ Done, both exchanges, with encrypted challenge
+   and the advertisement. **The harness now has no exemptions at all.**
 4. **The host-based referral**, `find_referral_tgs` (`do_tgs_req.c:487-523`):
    a client asking for `host/www.example.com` in the wrong realm is told
    which realm to ask instead, from a host-to-realm map. It needs a
@@ -392,15 +394,47 @@ are not "fixed" back by accident.
   — so the comparison covers the whole reply with no skipped fields, and the
   gap is recorded here instead of hidden in an exemption. A Windows client
   expecting a PAC will not be satisfied by this KDC yet.
-- **No FAST, and it is not advertised.** Upstream announces it twice: an
-  empty `PA-FX-FAST` leads the preauth hint list (`kdc/kdc_preauth.c:380`),
-  and another is added beside the RFC 6806 reply checksum unconditionally
-  (`kdc/kdc_util.c:1800-1802`), which is how a client comes to write
-  `fast_avail: yes` into its credential cache. This KDC does neither. A
-  client told FAST were available and then refused it would be a broken
-  deployment; one told it is unavailable simply does not use it, which is what
-  every passing end-to-end case here does. It is the golden harness's one
-  **declared exemption**, reported on every run rather than skipped.
+- **FAST is implemented and advertised, both exchanges.** Announced in both
+  the places upstream announces it: an empty `PA-FX-FAST` leading the preauth
+  hint list (`kdc/kdc_preauth.c:999-1001`), which is what lets `kinit -T`
+  upgrade after a refusal, and another beside the RFC 6806 reply checksum
+  (`kdc/kdc_util.c:1784-1797`), which is how a client comes to write
+  `fast_avail: yes` into its credential cache. Both are conditional on the
+  client having asked for the checksum, which looks odd for an advertisement
+  and is upstream's structure: the whole function returns early without a
+  PA-REQ-ENC-PA-REP in the request (`:1779-1782`).
+- **The encrypted cookie is not implemented; the trivial one is.** A cookie is
+  sent on every AS refusal carrying hints, as upstream does
+  (`do_as_req.c:785-796`), and it is upstream's own three constant bytes
+  `"MIT"` (`fast_util.c:675-676`). The encrypted `MIT1` form — a
+  `krb5_secure_cookie` under a key derived with `PRF+` from the local krbtgt
+  key over `"COOKIE"||client`, usage 513, with a 600-second expiry — is
+  needed only by mechanisms that span more than two round trips,
+  and this KDC has none. An incoming `MIT1` cookie is therefore ignored rather
+  than checked for expiry, which upstream's own reader also does to anything
+  not in that format (`:563-566`). Worth noting for later that the key is
+  derived from the *local krbtgt key*, so a real cookie would survive across
+  KDCs sharing one database — which is what this project's
+  high-availability claim needs.
+- **FAST cannot protect a client's *first* exchange, and that is the
+  protocol.** An AS request carries nothing authenticated of its own, so a
+  client has to supply a separate ticket to armor with — which it can only
+  have got from an unarmored exchange. Anonymous PKINIT is the one way to
+  bootstrap a tunnel from nothing, and PKINIT is not implemented. So the
+  password-guessing window FAST closes is every exchange after a client's
+  first, not all of them.
+- **`hide-client-names` is refused rather than honoured.** Bit `0x40000000` is
+  not in upstream's critical set (`k5-int.h:802-803`), so upstream honours it
+  and this answers `KDC_ERR_POLICY` instead. Same reasoning as S4U2Proxy and
+  `KDC_OPT_DISABLE_TRANSITED_CHECK`: a client that asked for its name not to
+  appear in the clear and got a reply naming it has been failed silently, and
+  refusing says so. No stock `kinit` sets the bit.
+- **Explicit TGS armor is absent and unreachable anyway.** A client can build
+  `CF2(armor, "explicitarmor", subkey, "tgsarmor")` from a named armor cache
+  (`lib/krb5/krb/fast.c:111-137`), but no MIT KDC can answer it:
+  `kdc_find_fast` refuses an armor field on a TGS request outright
+  (`fast_util.c:158-164`).
+  That is a divergence inside upstream rather than one here.
 - **No authorization data, and `last-req` is upstream's stub.**
   `fetch_last_req_info` returns one constant `{KRB5_LRQ_NONE, 0}` entry
   (`kdc/kdc_util.c:677-688`); matching the stub is deliberate, because
@@ -714,6 +748,18 @@ tests. It is green.
   and lets the client find the dead end further along — and the C KDC was
   asked and does exactly the same, so the case that can refuse is driven from
   a realm with no trust along the path at all.
+- **FAST** — covered four ways, which it needs because a FAST failure can
+  look like success: the armored and unarmored paths give the same ticket from
+  the same inputs, and a client that rejects an unarmored reply reports
+  something that reads like a transport problem. So every case asserts the
+  reply *was* armored — one outer padata element of type 136, a `finished`
+  field present, and a ticket checksum that verifies under the armor key —
+  and the end-to-end cases read the client's own trace for "FAST reply key",
+  which a client logs only after making all three of those checks itself plus
+  the nonce and the strengthen key. The reply-key strengthening is asserted
+  both ways round: the strengthened key opens the enc-part and the base key
+  does not, because a KDC that put a strengthen key in the tunnel and then
+  sealed with the unstrengthened one would pass every other check.
 - **The transited field** — covered against upstream's own vectors and then
   differentially. `lib/krb5/krb/transit-tests` is nine published expansion
   cases, including two that must be *refused*, and the comparison is of
@@ -756,11 +802,16 @@ tests. It is green.
   forward, and the client's clock with it: an authenticator left behind is
   refused for skew before anything interesting is reached, which is how the
   first draft of those tests failed.
-- **The harness has one declared exemption**, for the FAST advertisement
-  above. An exemption is not a skipped field: `Compare` returns waived
-  differences separately from real ones and the test logs every one on every
-  run, so the output always states what was not compared and a reader can
-  disagree with the reason.
+- **The harness has no exemptions.** It had exactly one, for the FAST
+  advertisement, waiving `enc.enc-padata` and `rep.enc-part` in seven cases
+  that had therefore never compared either. Landing FAST deleted the
+  advertisement gap and the exemption together, and deleting it immediately
+  found something: the C sends a `PA-FX-COOKIE` on *every* AS refusal carrying
+  hints, armored or not (`do_as_req.c:785-796`), where this KDC had restricted
+  it to the armored case. The machinery stays in `Compare` — waived
+  differences come back separately from real ones so a caller cannot report
+  diffs without the exemptions in hand — but nothing uses it, which is the
+  state to keep it in.
 - **`internal/kdc` and `internal/transport`** — covered. The reply is opened
   with the key a client derives from the password and the ticket with the
   krbtgt's, then the two halves are compared against each other. The preauth

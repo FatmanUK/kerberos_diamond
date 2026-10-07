@@ -132,7 +132,7 @@ func TestForwardedMatchesTheC(t *testing.T) {
 
 	assertDelegated(t, "oracle", cx, wire.FlagForwarded, addrs)
 	assertDelegated(t, "diamond", gx, wire.FlagForwarded, addrs)
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // TestProxiedMatchesTheC is the differential test for proxying, which
@@ -173,7 +173,7 @@ func TestProxiedMatchesTheC(t *testing.T) {
 
 	assertDelegated(t, "oracle", cx, wire.FlagProxy, addrs)
 	assertDelegated(t, "diamond", gx, wire.FlagProxy, addrs)
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // proxiableServiceTicket obtains an ordinary service ticket from the

@@ -28,9 +28,13 @@ func TestPreauthRequiredCarriesAHint(t *testing.T) {
 	// *empty* PA-FX-FAST, which get_preauth_hint_list adds before
 	// anything else (kdc/kdc_preauth.c:999-1001) and which is how
 	// a client learns it may upgrade this exchange to FAST. Then
-	// the etype-info, then the factor.
+	// the etype-info, then the factor. The cookie last is
+	// upstream's: prepare_error_as appends one to every AS
+	// refusal carrying hints, with no condition on FAST
+	// (do_as_req.c:785-796).
 	want := []int32{
 		wire.PAFXFast, wire.PAETypeInfo2, wire.PAEncTimestamp,
+		wire.PAFXCookie,
 	}
 	if len(hints) != len(want) {
 		t.Fatalf("got %d hints: %+v", len(hints), hints)

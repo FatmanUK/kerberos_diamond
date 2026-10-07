@@ -213,27 +213,36 @@ func keyExpiry(s *asState) uint32 {
 	return tsMin(exp, pw)
 }
 
-// encPAData is the reply's *encrypted* padata.
+// encPAData is the *encrypted* padata, distinct from the AS-REP's
+// cleartext padata: it travels inside the enc-part, sealed with the
+// reply key, where a client can trust it came from something holding
+// that key.
 //
-// It carries the RFC 6806 reply checksum, and only when the client
-// asked for one by sending an empty PA-REQ-ENC-PA-REP
-// (kdc_handle_protected_negotiation, kdc/kdc_util.c:1768-1807). The
-// checksum is over the request bytes as received, keyed with the
-// reply key under key usage 56.
+// Two things go in it and both are advertisements of a sort.
 //
-// This is not optional in practice. get_ticket_flags sets
-// TKT_FLG_ENC_PA_REP on every ticket, and a client that sees that
-// flag *demands* the checksum and rejects the reply with
-// KRB5_KDCREP_MODIFIED if it is missing (krb5int_fast_verify_nego,
-// lib/krb5/krb/fast.c:635-673). A KDC that set the flag and sent no
-// checksum would be refused by every MIT client while looking
-// entirely correct in a field-by-field diff against a request that
-// did not ask for one.
+// RFC 6806's reply checksum goes in when the client asked for one
+// with PA-REQ-ENC-PA-REP, and a client that asked and does not get
+// one refuses the reply (krb5int_fast_verify_nego,
+// lib/krb5/krb/fast.c:635-673). It is keyed with the *strengthened*
+// reply key, because upstream computes it after the strengthening
+// (do_as_req.c:312-318) and a client verifies it with the key it
+// decrypted the reply with.
 //
-// Upstream also adds an empty PA-FX-FAST here, which is what makes a
-// client report "FAST negotiation: available". This does not: FAST is
-// not implemented, and advertising it would have the client record
-// availability it cannot use.
+// Then an empty PA-FX-FAST, which is how a client learns FAST is
+// available here: it writes "fast_avail: yes" against this ticket in
+// its credential cache (get_in_tkt.c:1635-1640), and a later kinit -T
+// armed from that cache then goes straight to FAST with no probe
+// round trip. The order is upstream's -- checksum first
+// (kdc_handle_protected_negotiation, kdc/kdc_util.c:1784-1797) -- and
+// it matters, because a client reads the list and the harness
+// compares it element by element.
+//
+// Both are conditional on the client having asked for the checksum.
+// That looks odd for the advertisement but it is upstream's
+// structure: the whole function returns early without a
+// PA-REQ-ENC-PA-REP in the request (:1779-1782), so a client that
+// does not ask for a checksum is not told about FAST either. It will
+// find out by trying.
 func (k *KDC) encPAData(s *asState) ([]wire.PAData, error) {
 	if findPAData(s.req.PAData, wire.PAReqEncPARep) == nil {
 		return nil, nil
@@ -242,11 +251,6 @@ func (k *KDC) encPAData(s *asState) ([]wire.PAData, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Keyed with the *strengthened* key, because upstream
-	// computes this after kdc_fast_handle_reply_key has run
-	// (do_as_req.c:312-318). A client verifies it with the key it
-	// decrypted the reply with, so the unstrengthened one would
-	// fail there and look like a tampered reply.
 	sum, err := p.Checksum(s.replyKey, s.raw, crypto.UsageASReq)
 	if err != nil {
 		return nil, err
@@ -260,5 +264,6 @@ func (k *KDC) encPAData(s *asState) ([]wire.PAData, error) {
 	}
 	return []wire.PAData{
 		{Type: wire.PAReqEncPARep, Value: der},
+		{Type: wire.PAFXFast},
 	}, nil
 }

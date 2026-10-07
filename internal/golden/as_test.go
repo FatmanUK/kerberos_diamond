@@ -3,6 +3,7 @@ package golden
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -394,16 +395,21 @@ func refusal(t *testing.T, raw []byte) wire.KRBError {
 	return e
 }
 
-// compareHints checks both sides offered PA-ETYPE-INFO2 with the same
-// enctype and salt, which is what a client needs to answer the
-// refusal.
+// compareHints compares the whole hint list, types in order, and then
+// the ETYPE-INFO2 entry a client acts on.
 //
-// The hint lists are not compared wholesale: the C's leads with an
-// empty PA-FX-FAST to advertise FAST (kdc/kdc_preauth.c:380), which
-// this project does not implement and deliberately does not claim. So
-// the comparison is of the ETYPE-INFO2 the client actually acts on.
+// The list is compared wholesale now that this KDC advertises FAST.
+// It could not be before: the C's list leads with an empty PA-FX-FAST
+// (kdc/kdc_preauth.c:999-1001) and this one did not, so only the
+// etype-info was compared and the rest of the shape went unchecked --
+// which is most of what a client reads, since it takes the first
+// mechanism it understands.
 func compareHints(t *testing.T, cErr, goErr wire.KRBError) {
 	t.Helper()
+	if a, b := hintTypes(t, cErr), hintTypes(t, goErr); a != b {
+		t.Errorf("the hint lists differ:\n oracle:  %s\n"+
+			"diamond: %s", a, b)
+	}
 	c := etypeInfo2(t, "oracle", cErr)
 	g := etypeInfo2(t, "diamond", goErr)
 	if c.EType != g.EType {
@@ -422,6 +428,21 @@ func compareHints(t *testing.T, cErr, goErr wire.KRBError) {
 		t.Errorf("s2kparams: oracle % X, diamond % X",
 			c.S2KParams, g.S2KParams)
 	}
+}
+
+// hintTypes renders a refusal's hint list as its padata types in
+// order, which is what a client reads to choose a mechanism.
+func hintTypes(t *testing.T, e wire.KRBError) string {
+	t.Helper()
+	hints, err := wire.UnmarshalPADataSeq(e.EData)
+	if err != nil {
+		t.Fatalf("e-data: %v", err)
+	}
+	out := make([]string, len(hints))
+	for i, p := range hints {
+		out[i] = strconv.Itoa(int(p.Type))
+	}
+	return strings.Join(out, " ")
 }
 
 // etypeInfo2 pulls the first ETYPE-INFO2 entry out of a refusal's

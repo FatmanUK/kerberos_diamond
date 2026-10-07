@@ -106,18 +106,26 @@ func (k *KDC) hintList(s *asState) ([]wire.PAData, error) {
 		{Type: wire.PAETypeInfo2, Value: info},
 	}
 	if s.fast == nil {
-		return append(out,
-			wire.PAData{Type: wire.PAEncTimestamp}), nil
+		out = append(out,
+			wire.PAData{Type: wire.PAEncTimestamp})
+	} else {
+		out = append(out,
+			wire.PAData{Type: wire.PAEncryptedChallenge})
 	}
-	// A cookie is not optional inside a tunnel. A client sets its
-	// retry flag only when the inner padata holds more than
-	// PA-FX-ERROR *and* a PA-FX-COOKIE is present
-	// (lib/krb5/krb/fast.c:481-490, get_in_tkt.c:1727-1766), so
-	// without one kinit gives up on this refusal instead of
-	// answering the challenge.
-	return append(out,
-		wire.PAData{Type: wire.PAEncryptedChallenge},
-		fastCookie()), nil
+	// The cookie goes last and goes on *every* AS refusal that
+	// carries hints, armored or not: prepare_error_as appends one
+	// whenever there is e_data at all, with no condition on FAST
+	// (do_as_req.c:785-796). Restricting it to the armored case
+	// was this implementation's mistake, and deleting the harness
+	// exemption is what found it -- the C's unarmored hint list
+	// is "136 19 2 133" and this one was "136 19 2".
+	//
+	// Inside a tunnel it is load-bearing: without it a client
+	// will not retry at all (lib/krb5/krb/fast.c:481-492).
+	// Outside one nothing reads it, because a client retries on
+	// any non-empty e-data there (fast.c:493-497). It is sent in
+	// both cases because upstream sends it in both.
+	return append(out, fastCookie()), nil
 }
 
 // etypeInfo2 builds the single ETYPE-INFO2 entry the hint list

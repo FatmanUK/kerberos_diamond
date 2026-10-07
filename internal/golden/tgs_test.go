@@ -336,33 +336,7 @@ func TestTGSExchangeMatchesTheC(t *testing.T) {
 
 	assertTGSSucceeded(t, "oracle", cx, authTime)
 	assertTGSSucceeded(t, "diamond", gx, authTime)
-	reportDiffs(t, cx, gx, fastExemptions()...)
-}
-
-// fastExemptions declares the one difference this comparison does not
-// make, and why.
-//
-// kdc_handle_protected_negotiation adds an empty PA-FX-FAST beside
-// the reply checksum unconditionally (kdc/kdc_util.c:1800-1802),
-// which is how a client learns FAST is available -- it stores
-// "fast_avail: yes" in its credential cache and may arm later
-// exchanges with it. This KDC does not implement FAST, so it does not
-// claim to: a client told FAST were available and then refused it
-// would be a broken deployment, where one told it is unavailable
-// simply does not use it, which is what every passing end-to-end case
-// here does.
-//
-// The reply's ciphertext length is exempt as a consequence: the
-// missing padata element is exactly twelve octets of plaintext. It is
-// listed separately rather than folded in, so that a length
-// difference arising from anything else would still fail.
-func fastExemptions() []Exemption {
-	const why = "FAST is not implemented, so it is not advertised"
-	return []Exemption{
-		{Field: "enc.enc-padata", Reason: why},
-		{Field: "rep.enc-part",
-			Reason: why + " (12 octets of padata)"},
-	}
+	reportDiffs(t, cx, gx)
 }
 
 // assertTGSSucceeded checks the exchange produced a usable service
@@ -618,7 +592,7 @@ func TestRenewalMatchesTheC(t *testing.T) {
 
 	assertRenewed(t, "oracle", cx, before)
 	assertRenewed(t, "diamond", gx, before)
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // openRenewed decrypts a renewed TGT. Both halves open with keys the

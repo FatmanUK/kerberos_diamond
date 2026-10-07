@@ -340,7 +340,7 @@ func TestFASTASExchangeMatchesTheC(t *testing.T) {
 
 	assertSucceeded(t, cx)
 	assertSucceeded(t, gx)
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // TestStockKinitFASTAgainstTheGoKDC is the end-to-end check for FAST,
@@ -499,4 +499,43 @@ func renderTypes(ps []wire.PAData) string {
 		out[i] = strconv.Itoa(int(p.Type))
 	}
 	return strings.Join(out, " ")
+}
+
+// TestStockKinitFindsFASTFromTheCache is what the advertisement is
+// for.
+//
+// The first kinit asks for nothing but a ticket. The reply's
+// encrypted padata carries an empty PA-FX-FAST, so the client writes
+// "fast_avail: yes" against that ticket in its cache
+// (get_in_tkt.c:1635-1640). A second kinit armed from that cache then
+// goes straight to FAST -- "Using FAST due to armor ccache
+// negotiation result" -- with no probe round trip and nothing told to
+// it on the command line.
+//
+// It is the only test here that distinguishes advertising FAST from
+// merely implementing it.
+func TestStockKinitFindsFASTFromTheCache(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 60*time.Second)
+	defer cancel()
+
+	env := pointAtDiamond(t, ctx, o, "avail", true)
+	armor := "/realm/avail-armor.ccache"
+	out, err := o.ExecEnv(ctx,
+		append(env, "KRB5CCNAME="+armor),
+		UserPassword+"\n", "kinit", UserName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("the armor kinit failed: %v\n%s", err, out)
+	}
+	out, err = o.ExecEnv(ctx, env, UserPassword+"\n",
+		"kinit", "-T", armor, PreauthName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("kinit -T failed: %v\n%s", err, out)
+	}
+	want := "Using FAST due to armor ccache negotiation result"
+	if !strings.Contains(out, want) {
+		t.Errorf("no %q in the trace, so the advertisement "+
+			"did not reach the cache:\n%s", want, out)
+	}
 }

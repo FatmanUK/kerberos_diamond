@@ -150,7 +150,7 @@ func TestU2UMatchesTheC(t *testing.T) {
 
 	assertU2U(t, "oracle", cx, peer)
 	assertU2U(t, "diamond", gx, peer)
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // assertU2U checks the exchange issued a usable ticket rather than

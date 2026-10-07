@@ -170,7 +170,7 @@ func TestCrossRealmMatchesTheC(t *testing.T) {
 
 	assertCrossRealm(t, "oracle", cx)
 	assertCrossRealm(t, "diamond", gx)
-	reportDiffs(t, cx, gx, fastExemptions()...)
+	reportDiffs(t, cx, gx)
 }
 
 // assertCrossRealm checks the exchange issued a ticket of this realm
