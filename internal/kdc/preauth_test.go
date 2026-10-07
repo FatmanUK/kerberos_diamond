@@ -24,20 +24,30 @@ func TestPreauthRequiredCarriesAHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("e-data: %v", err)
 	}
-	if len(hints) != 2 {
+	// Upstream's order, and the first element is the surprise: an
+	// *empty* PA-FX-FAST, which get_preauth_hint_list adds before
+	// anything else (kdc/kdc_preauth.c:999-1001) and which is how
+	// a client learns it may upgrade this exchange to FAST. Then
+	// the etype-info, then the factor.
+	want := []int32{
+		wire.PAFXFast, wire.PAETypeInfo2, wire.PAEncTimestamp,
+	}
+	if len(hints) != len(want) {
 		t.Fatalf("got %d hints: %+v", len(hints), hints)
 	}
-	// PA-ETYPE-INFO2 first, then the empty PA-ENC-TIMESTAMP,
-	// which is upstream's order (kdc/kdc_preauth.c:383-387).
-	if hints[0].Type != wire.PAETypeInfo2 {
-		t.Errorf("first hint is type %d", hints[0].Type)
+	for i, w := range want {
+		if hints[i].Type != w {
+			t.Errorf("hint %d is type %d, want %d",
+				i, hints[i].Type, w)
+		}
 	}
-	if hints[1].Type != wire.PAEncTimestamp {
-		t.Errorf("second hint is type %d", hints[1].Type)
-	}
-	if len(hints[1].Value) != 0 {
-		t.Errorf("PA-ENC-TIMESTAMP hint carries %d bytes",
-			len(hints[1].Value))
+	// Both the advertisement and the factor carry nothing: they
+	// are the presence of an offer, not its content.
+	for _, i := range []int{0, 2} {
+		if len(hints[i].Value) != 0 {
+			t.Errorf("hint %d carries %d bytes",
+				i, len(hints[i].Value))
+		}
 	}
 }
 
@@ -54,7 +64,11 @@ func TestETypeInfo2HasOneEntryWithTheSalt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("e-data: %v", err)
 	}
-	info, err := wire.UnmarshalETypeInfo2(hints[0].Value)
+	pa := findPAData(hints, wire.PAETypeInfo2)
+	if pa == nil {
+		t.Fatalf("no PA-ETYPE-INFO2 in %+v", hints)
+	}
+	info, err := wire.UnmarshalETypeInfo2(pa.Value)
 	if err != nil {
 		t.Fatalf("PA-ETYPE-INFO2: %v", err)
 	}
@@ -134,7 +148,15 @@ func hintSalt(t *testing.T, k *KDC) (string, crypto.EncType) {
 	if err != nil {
 		t.Fatalf("e-data: %v", err)
 	}
-	info, err := wire.UnmarshalETypeInfo2(hints[0].Value)
+	// Found by type, not by position. Upstream's hint list leads
+	// with the empty PA-FX-FAST that advertises FAST
+	// (kdc/kdc_preauth.c:999-1001), so the etype-info is not
+	// first and a client has no business assuming it is.
+	pa := findPAData(hints, wire.PAETypeInfo2)
+	if pa == nil {
+		t.Fatalf("no PA-ETYPE-INFO2 in %+v", hints)
+	}
+	info, err := wire.UnmarshalETypeInfo2(pa.Value)
 	if err != nil {
 		t.Fatalf("PA-ETYPE-INFO2: %v", err)
 	}

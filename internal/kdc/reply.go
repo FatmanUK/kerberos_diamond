@@ -80,9 +80,23 @@ func (k *KDC) replyPAData(s *asState) ([]wire.PAData, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []wire.PAData{
+	out := []wire.PAData{
 		{Type: wire.PAETypeInfo2, Value: info},
-	}, nil
+	}
+	// An encrypted challenge is answered in kind, which is the
+	// KDC authenticating itself: only something holding the
+	// client's long-term key could have produced it (ec_return,
+	// kdc/kdc_preauth_ec.c:154-205). Under FAST this travels
+	// inside the tunnel, because the tunnel takes the reply's
+	// padata with it.
+	ch, err := k.answerChallenge(s)
+	if err != nil {
+		return nil, err
+	}
+	if ch != nil {
+		out = append(out, *ch)
+	}
+	return out, nil
 }
 
 // ticket seals the EncTicketPart under the server's key with key

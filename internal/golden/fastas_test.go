@@ -2,6 +2,8 @@ package golden
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,17 +50,7 @@ func buildArmoredAS(
 		t.Fatal(err)
 	}
 	ap := armorField(t, g, p, sub)
-	// The outer body is the inner body with the padata stripped,
-	// and a KDC-REQ-BODY has no padata field -- so they are the
-	// same bytes (krb5int_fast_prep_req_body, fast.c:143-168).
-	draft, err := wire.MarshalASReq(wire.ASReq{Body: body})
-	if err != nil {
-		t.Fatal(err)
-	}
-	outer, err := wire.ReqBodyBytes(draft)
-	if err != nil {
-		t.Fatal(err)
-	}
+	outer := outerBody(t, body)
 	fast := sealFastASReq(t, p, armor, body, ap, outer, inner)
 	msg, err := wire.MarshalASReq(wire.ASReq{
 		PAData: []wire.PAData{fast},
@@ -70,6 +62,24 @@ func buildArmoredAS(
 	return armoredAS{
 		msg: msg, armor: armor, p: p, nonce: body.Nonce,
 	}
+}
+
+// outerBody is the encoded KDC-REQ-BODY the FAST checksum covers.
+//
+// It is the inner body with the padata stripped, and a KDC-REQ-BODY
+// has no padata field -- so they are the same bytes
+// (krb5int_fast_prep_req_body, lib/krb5/krb/fast.c:143-168).
+func outerBody(t *testing.T, body wire.KDCReqBody) []byte {
+	t.Helper()
+	draft, err := wire.MarshalASReq(wire.ASReq{Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := wire.ReqBodyBytes(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // armorField builds the AP-REQ that goes in the armor field.
@@ -85,25 +95,7 @@ func armorField(
 	sub []byte,
 ) wire.KrbFastArmor {
 	t.Helper()
-	now := time.Now().UTC().Truncate(time.Second)
-	plain, err := wire.MarshalAuthenticator(wire.Authenticator{
-		CRealm: Realm,
-		CName: wire.PrincipalName{
-			Type:       wire.NTPrincipal,
-			Components: []string{UserName},
-		},
-		CUsec:  1234,
-		CTime:  now,
-		SubKey: subKeyOf(p, sub),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ct, err := p.Encrypt(g.session, plain,
-		crypto.UsageAPReqAuth)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ct := sealArmorAuth(t, p, g.session, sub)
 	der, err := wire.MarshalAPReq(wire.APReq{
 		Ticket: g.ticket,
 		Authenticator: wire.EncryptedData{
@@ -118,6 +110,37 @@ func armorField(
 		Type:  wire.FastArmorAPRequest,
 		Value: der,
 	}
+}
+
+// sealArmorAuth encrypts the armor AP-REQ's authenticator at key
+// usage 11, which is an application AP-REQ's usage and not a TGS
+// request's.
+func sealArmorAuth(
+	t *testing.T,
+	p *crypto.EncProfile,
+	session, sub []byte,
+) []byte {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Second)
+	plain, err := wire.MarshalAuthenticator(wire.Authenticator{
+		CRealm: Realm,
+		CName: wire.PrincipalName{
+			Type:       wire.NTPrincipal,
+			Components: []string{UserName},
+		},
+		CUsec:  1234,
+		CTime:  now,
+		SubKey: subKeyOf(p, sub),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := p.Encrypt(session, plain,
+		crypto.UsageAPReqAuth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ct
 }
 
 // sealFastASReq wraps the inner AS request. The checksum is over the
@@ -144,7 +167,20 @@ func sealFastASReq(
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum, err := p.Checksum(armor, outer, crypto.UsageFASTReqCksum)
+	return wrapFastASReq(t, p, armor, ct, outer, ap)
+}
+
+// wrapFastASReq builds the PA-FX-FAST around an encrypted inner AS
+// request, its armor field and the checksum over the outer body.
+func wrapFastASReq(
+	t *testing.T,
+	p *crypto.EncProfile,
+	armor, ct, outer []byte,
+	ap wire.KrbFastArmor,
+) wire.PAData {
+	t.Helper()
+	sum, err := p.Checksum(armor, outer,
+		crypto.UsageFASTReqCksum)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,4 +341,162 @@ func TestFASTASExchangeMatchesTheC(t *testing.T) {
 	assertSucceeded(t, cx)
 	assertSucceeded(t, gx)
 	reportDiffs(t, cx, gx, fastExemptions()...)
+}
+
+// TestStockKinitFASTAgainstTheGoKDC is the end-to-end check for FAST,
+// and the first point in this work where a real client authenticates
+// through the tunnel.
+//
+// It needs two kinits: the first obtains an ordinary TGT to armor
+// with, because FAST cannot protect a client's first exchange, and
+// the second upgrades to FAST with -T and answers an encrypted
+// challenge. The principal is the one that demands
+// pre-authentication, which is what makes the challenge happen at
+// all.
+func TestStockKinitFASTAgainstTheGoKDC(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 60*time.Second)
+	defer cancel()
+
+	env := pointAtDiamond(t, ctx, o, "fast", true)
+	armor := "/realm/fast-armor.ccache"
+	out, err := o.ExecEnv(ctx,
+		append(env, "KRB5CCNAME="+armor),
+		UserPassword+"\n", "kinit", UserName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("the armor kinit failed: %v\n%s", err, out)
+	}
+	out, err = o.ExecEnv(ctx, env, UserPassword+"\n",
+		"kinit", "-T", armor, PreauthName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("kinit -T failed: %v\n%s", err, out)
+	}
+	assertUsedFAST(t, out)
+	assertTicket(t, ctx, o, env, PreauthName)
+}
+
+// assertUsedFAST reads the client's trace for the three things that
+// say the tunnel was real.
+//
+// "FAST armor key" is the client deriving it; the challenge module
+// returning success is the factor this KDC had to implement; and the
+// armored error round trip is what the cookie exists for -- without
+// one the client would not have retried at all.
+func assertUsedFAST(t *testing.T, trace string) {
+	t.Helper()
+	for _, want := range []string{
+		"FAST armor key",
+		"Encoding request body and padata into FAST request",
+		"Decoding FAST response",
+		"encrypted_challenge (138) (real) returned: " +
+			"0/Success",
+	} {
+		if !strings.Contains(trace, want) {
+			t.Errorf("no %q in the trace:\n%s",
+				want, trace)
+		}
+	}
+	// And a timestamp must *not* have been used: upstream's KDC
+	// does not offer one inside a tunnel
+	// (kdc/kdc_preauth_encts.c:38-43), so a client that sent one
+	// would mean the hint list was wrong.
+	if strings.Contains(trace, "PA-ENC-TIMESTAMP (2) (real)") {
+		t.Errorf("a timestamp inside FAST:\n%s", trace)
+	}
+}
+
+// TestFASTHintsMatchTheC compares the armored PREAUTH_REQUIRED both
+// KDCs answer with, which is where the hint list and the cookie live.
+//
+// It compares types and not contents, deliberately. The etype-info's
+// bytes are the same on both sides and already compared elsewhere;
+// what this exists for is the *shape* -- which offers are made, in
+// what order, and whether a cookie is there at all. A client acts on
+// exactly that: it takes the first mechanism it understands, and it
+// will not retry without a cookie.
+func TestFASTHintsMatchTheC(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 30*time.Second)
+	defer cancel()
+
+	g, _ := getTGTFromTheC(t, ctx, o)
+	req := asRequest(t, PreauthName, in(requestedLife))
+	a := buildArmoredAS(t, g, req.Body, req.PAData)
+
+	cRaw, err := o.SendRaw(ctx, a.msg)
+	if err != nil {
+		t.Fatalf("asking the C KDC: %v", err)
+	}
+	d := diamond(t, "kd_golden_fast_hints", nil)
+	goRaw, err := d.KDC.Handle(a.msg)
+	if err != nil {
+		t.Fatalf("asking the Go KDC: %v", err)
+	}
+	c := armoredHints(t, "oracle", cRaw, a)
+	gh := armoredHints(t, "diamond", goRaw, a)
+	if c != gh {
+		t.Errorf("the hint lists differ:\n oracle:  %s\n"+
+			"diamond: %s", c, gh)
+	}
+	// And the shape has to be the right one, not merely a shared
+	// one: two KDCs that both omitted the cookie would agree
+	// perfectly and neither would work.
+	for _, want := range []string{"133", "137", "138"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("the C's own hints lack type %s: %s",
+				want, c)
+		}
+	}
+}
+
+// armoredHints unwraps an armored refusal and renders its inner
+// padata types in order.
+func armoredHints(
+	t *testing.T,
+	side string,
+	raw []byte,
+	a armoredAS,
+) string {
+	t.Helper()
+	e, err := wire.UnmarshalKRBError(raw)
+	if err != nil {
+		t.Fatalf("%s: expected a KRB-ERROR: %v", side, err)
+	}
+	if e.ErrorCode != wire.ErrCodePreauthRequired {
+		t.Fatalf("%s: code %d, want PREAUTH_REQUIRED",
+			side, e.ErrorCode)
+	}
+	outer, err := wire.UnmarshalPADataSeq(e.EData)
+	if err != nil {
+		t.Fatalf("%s: e-data: %v", side, err)
+	}
+	if len(outer) != 1 || outer[0].Type != wire.PAFXFast {
+		t.Fatalf("%s: e-data is %+v, want one PA-FX-FAST",
+			side, outer)
+	}
+	ed, err := wire.UnmarshalPAFXFastReply(outer[0].Value)
+	if err != nil {
+		t.Fatalf("%s: reply wrapper: %v", side, err)
+	}
+	plain, err := a.p.Decrypt(a.armor, ed.Cipher,
+		crypto.UsageFASTRep)
+	if err != nil {
+		t.Fatalf("%s: the armor key did not open it: %v",
+			side, err)
+	}
+	resp, err := wire.UnmarshalKrbFastResponse(plain)
+	if err != nil {
+		t.Fatalf("%s: KrbFastResponse: %v", side, err)
+	}
+	return renderTypes(resp.PAData)
+}
+
+func renderTypes(ps []wire.PAData) string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = strconv.Itoa(int(p.Type))
+	}
+	return strings.Join(out, " ")
 }

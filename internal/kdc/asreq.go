@@ -61,6 +61,12 @@ type asState struct {
 	// reply under the current one.
 	challengeKey []byte
 
+	// challengeEType is that key's enctype, which the reply's
+	// answering challenge needs and which is not necessarily
+	// clientEType: a client may prove with one enctype and ask
+	// for the reply under another.
+	challengeEType crypto.EncType
+
 	serverKey   []byte
 	serverKVNO  int32
 	serverEType crypto.EncType

@@ -366,10 +366,27 @@ func (k *KDC) wrapErr(
 }
 
 // wrapError builds the e-data of an armored refusal.
+//
+// The refusal's existing e-data is a PA-DATA sequence -- the hint
+// list -- and it goes *inside* the tunnel with PA-FX-ERROR appended,
+// which is what upstream does: kdc_fast_handle_error is handed the
+// caller's padata list and adds to it (fast_util.c:387-401).
+//
+// Dropping it is a silent dead end, and was one here until a stock
+// kinit -T said so. A client sets its retry flag only when the inner
+// padata holds more than PA-FX-ERROR *and* a cookie is present
+// (lib/krb5/krb/fast.c:481-492), so an armored PREAUTH_REQUIRED
+// carrying nothing but the error makes kinit report "Additional
+// pre-authentication required" and stop -- with the tunnel itself
+// having worked perfectly, which is what made it hard to see.
 func (f *fastState) wrapError(
 	e *wire.KRBError,
 	nonce int32,
 ) ([]byte, error) {
+	hints, err := innerHints(e.EData)
+	if err != nil {
+		return nil, err
+	}
 	// The inner error's own e-data is blanked
 	// (fast_util.c:384-386), which is what stops the container
 	// nesting inside itself.
@@ -380,13 +397,28 @@ func (f *fastState) wrapError(
 		return nil, err
 	}
 	pa, err := f.seal(wire.KrbFastResponse{
-		PAData: []wire.PAData{
-			{Type: wire.PAFXError, Value: der},
-		},
+		PAData: append(hints, wire.PAData{
+			Type: wire.PAFXError, Value: der,
+		}),
 		Nonce: nonce,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return wire.MarshalPADataSeq([]wire.PAData{pa})
+}
+
+// innerHints decodes a refusal's e-data into the padata list that
+// goes inside the tunnel.
+//
+// Empty e-data is the common case and not an error: most refusals
+// carry no hints, and every refusal on the TGS path carries none --
+// upstream adds a cookie only on the AS error path
+// (do_as_req.c:786-795, against prepare_error_tgs at
+// do_tgs_req.c:190-240, which adds nothing).
+func innerHints(edata []byte) ([]wire.PAData, error) {
+	if len(edata) == 0 {
+		return nil, nil
+	}
+	return wire.UnmarshalPADataSeq(edata)
 }

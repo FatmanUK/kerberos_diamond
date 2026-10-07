@@ -25,6 +25,20 @@ func (k *KDC) preauth(s *asState) *wire.KRBError {
 	if !s.client.RequiresPreAuth() {
 		return nil
 	}
+	// Inside a tunnel the factor is an encrypted challenge, and a
+	// timestamp is not offered. Upstream still *accepts* a
+	// timestamp that arrives inside one -- ec_verify has the
+	// armor check but enc_ts_verify has none
+	// (kdc/kdc_preauth_encts.c:46) -- so this does too, and the
+	// asymmetry is upstream's rather than an oversight here.
+	if ch := findPAData(
+		s.req.PAData, wire.PAEncryptedChallenge); ch != nil {
+		code, status := k.checkChallenge(s, ch.Value)
+		if code != 0 {
+			return k.krbError(code, status, s.nameOrNil())
+		}
+		return nil
+	}
 	ts := findPAData(s.req.PAData, wire.PAEncTimestamp)
 	if ts == nil {
 		return k.preauthRequired(s)
@@ -55,21 +69,55 @@ func (k *KDC) preauth(s *asState) *wire.KRBError {
 func (k *KDC) preauthRequired(s *asState) *wire.KRBError {
 	e := k.krbError(wire.ErrCodePreauthRequired,
 		"NEEDED_PREAUTH", s.nameOrNil())
-	info, err := k.etypeInfo2(s)
+	hints, err := k.hintList(s)
 	if err != nil {
 		return k.krbError(wire.ErrCodeGeneric,
 			"ETYPE_INFO2", s.nameOrNil())
 	}
-	edata, err := wire.MarshalPADataSeq([]wire.PAData{
-		{Type: wire.PAETypeInfo2, Value: info},
-		{Type: wire.PAEncTimestamp},
-	})
+	edata, err := wire.MarshalPADataSeq(hints)
 	if err != nil {
 		return k.krbError(wire.ErrCodeGeneric,
 			"ETYPE_INFO2", s.nameOrNil())
 	}
 	e.EData = edata
 	return e
+}
+
+// hintList is the hint list a PREAUTH_REQUIRED carries
+// (get_preauth_hint_list, kdc/kdc_preauth.c:975-1013).
+//
+// The order is upstream's. The empty PA-FX-FAST comes first and is
+// the *advertisement*: it is what tells a client with an armor cache
+// that it may upgrade this exchange to FAST (get_in_tkt.c:1702-1708).
+// Then PA-ETYPE-INFO2, then whichever factor applies.
+//
+// Which factor applies is decided by the armor key, not by
+// configuration. Inside a tunnel it is an encrypted challenge and a
+// timestamp is *not* offered (kdc/kdc_preauth_encts.c:38-43); outside
+// one it is the reverse, because an encrypted challenge has no armor
+// key to combine with (kdc/kdc_preauth_ec.c:44-48).
+func (k *KDC) hintList(s *asState) ([]wire.PAData, error) {
+	info, err := k.etypeInfo2(s)
+	if err != nil {
+		return nil, err
+	}
+	out := []wire.PAData{
+		{Type: wire.PAFXFast},
+		{Type: wire.PAETypeInfo2, Value: info},
+	}
+	if s.fast == nil {
+		return append(out,
+			wire.PAData{Type: wire.PAEncTimestamp}), nil
+	}
+	// A cookie is not optional inside a tunnel. A client sets its
+	// retry flag only when the inner padata holds more than
+	// PA-FX-ERROR *and* a PA-FX-COOKIE is present
+	// (lib/krb5/krb/fast.c:481-490, get_in_tkt.c:1727-1766), so
+	// without one kinit gives up on this refusal instead of
+	// answering the challenge.
+	return append(out,
+		wire.PAData{Type: wire.PAEncryptedChallenge},
+		fastCookie()), nil
 }
 
 // etypeInfo2 builds the single ETYPE-INFO2 entry the hint list
