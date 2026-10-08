@@ -532,3 +532,255 @@ func TestPAEncTSEncMatchesTheReference(t *testing.T) {
 		})
 	}
 }
+
+// An AP-REP is three fields and a reference encoding makes short work
+// of it, but the one thing worth asserting by hand is the message
+// type: the application tag and the msg-type field are both 15, so a
+// reader who confused them would still get 15 and never find out.
+func TestAPRepMatchesTheReference(t *testing.T) {
+	want := ref(t, refAPRep)
+	r, err := UnmarshalAPRep(want)
+	if err != nil {
+		t.Fatalf("UnmarshalAPRep: %v", err)
+	}
+	if r.EncPart.KVNO != 5 {
+		t.Errorf("kvno = %d, want 5", r.EncPart.KVNO)
+	}
+	got, err := MarshalAPRep(r)
+	if err != nil {
+		t.Fatalf("MarshalAPRep: %v", err)
+	}
+	roundTrip(t, want, got)
+}
+
+// Both forms of the sealed half, because absence is most of what
+// there is to get wrong: cusec is mandatory here while the subkey and
+// the sequence number are not, and upstream publishes an encoding of
+// each.
+func TestEncAPRepPartMatchesTheReference(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		fix    string
+		subKey bool
+		seq    uint32
+	}{
+		{"all fields", refEncAPRepPart, true, 17},
+		{"optionals absent", refEncAPRepPartNoOpt, false, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			checkEncAPRepPart(t, ref(t, c.fix),
+				c.subKey, c.seq)
+		})
+	}
+}
+
+func checkEncAPRepPart(
+	t *testing.T, want []byte, subKey bool, seq uint32,
+) {
+	t.Helper()
+	p, err := UnmarshalEncAPRepPart(want)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if p.CUsec != 123456 {
+		t.Errorf("cusec = %d", p.CUsec)
+	}
+	if (p.SubKey != nil) != subKey {
+		t.Errorf("subkey %v", p.SubKey)
+	}
+	if p.SeqNumber != seq {
+		t.Errorf("seq = %d, want %d", p.SeqNumber, seq)
+	}
+	got, err := MarshalEncAPRepPart(p)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	roundTrip(t, want, got)
+}
+
+// KRB-PRIV's enc-part is at context tag 3 and not 2, because RFC 4120
+// leaves 2 unused. The reference encoding settles it -- which is the
+// whole reason these tests exist, because nothing about reading the
+// structure definition would have raised the question.
+func TestKRBPrivMatchesTheReference(t *testing.T) {
+	want := ref(t, refKRBPriv)
+	p, err := UnmarshalKRBPriv(want)
+	if err != nil {
+		t.Fatalf("UnmarshalKRBPriv: %v", err)
+	}
+	if p.EncPart.KVNO != 5 {
+		t.Errorf("kvno = %d, want 5", p.EncPart.KVNO)
+	}
+	got, err := MarshalKRBPriv(p)
+	if err != nil {
+		t.Fatalf("MarshalKRBPriv: %v", err)
+	}
+	roundTrip(t, want, got)
+}
+
+// And both forms of its sealed half. The pairing that matters is
+// which fields survive in the shorter one: the user data and the
+// *sender's* address, because s-address is mandatory and r-address is
+// not.
+func TestEncKRBPrivPartMatchesTheReference(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		fix   string
+		stamp bool
+		seq   uint32
+		rAddr bool
+	}{
+		{"all fields", refEncKRBPrivPart, true, 17, true},
+		{"optionals absent", refEncKRBPrivPartNoOpt,
+			false, 0, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			checkEncKRBPrivPart(t, ref(t, c.fix),
+				c.stamp, c.seq, c.rAddr)
+		})
+	}
+}
+
+func checkEncKRBPrivPart(
+	t *testing.T,
+	want []byte,
+	stamp bool,
+	seq uint32,
+	rAddr bool,
+) {
+	t.Helper()
+	p, err := UnmarshalEncKRBPrivPart(want)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if string(p.UserData) != "krb5data" {
+		t.Errorf("user-data %q", p.UserData)
+	}
+	if p.SAddress.Type != 2 || len(p.SAddress.Address) != 4 {
+		t.Errorf("s-address %v", p.SAddress)
+	}
+	if !p.Timestamp.IsZero() != stamp {
+		t.Errorf("timestamp %v", p.Timestamp)
+	}
+	if p.SeqNumber != seq {
+		t.Errorf("seq = %d, want %d", p.SeqNumber, seq)
+	}
+	if (p.RAddress != nil) != rAddr {
+		t.Errorf("r-address %v", p.RAddress)
+	}
+	got, err := MarshalEncKRBPrivPart(p)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	roundTrip(t, want, got)
+}
+
+// The directional addresses are what this project sends, because a
+// KDC reached over HTTPS has no address of its own to name: the
+// kpasswd frame arrives inside an HTTP body and the socket beneath
+// belongs to the transport. Upstream falls back to exactly these when
+// it cannot determine one (schpw.c:290, kpropd.c:1203), so the bytes
+// have to match (lib/krb5/os/addr.c:36-41).
+func TestDirectionalAddresses(t *testing.T) {
+	init, accept := DirectionalInit(), DirectionalAccept()
+	if init.Type != AddrTypeDirectional ||
+		accept.Type != AddrTypeDirectional {
+		t.Fatalf("types %d and %d", init.Type, accept.Type)
+	}
+	if string(init.Address) != "\x00\x00\x00\x00" {
+		t.Errorf("initiator %v", init.Address)
+	}
+	if string(accept.Address) != "\x00\x00\x00\x01" {
+		t.Errorf("acceptor %v", accept.Address)
+	}
+	// And they survive a round trip through the only message that
+	// carries one.
+	der, err := MarshalEncKRBPrivPart(EncKRBPrivPart{
+		UserData: []byte("x"),
+		SAddress: accept,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := UnmarshalEncKRBPrivPart(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.SAddress.Type != accept.Type ||
+		string(back.SAddress.Address) !=
+			string(accept.Address) {
+		t.Errorf("round trip gave %v", back.SAddress)
+	}
+}
+
+// ChangePasswdData has no reference encoding: upstream's test program
+// does not cover encode_krb5_setpw_req, so this is a round trip
+// against itself with the shape asserted by hand. The same treatment
+// KDC-PROXY-MESSAGE gets, and for the same reason -- it is checked
+// for real by a stock kpasswd, not here.
+func TestChangePasswdDataRoundTrips(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   ChangePasswdData
+	}{
+		// A self change sends no target at all, which is what
+		// the server reads as "mine".
+		{"self", ChangePasswdData{
+			NewPassword: []byte("new-password"),
+		}},
+		// And setting someone else's splits the one principal
+		// across two fields, as upstream's encoder does.
+		{"a named target", ChangePasswdData{
+			NewPassword: []byte("new-password"),
+			TargName: &PrincipalName{
+				Type:       NTPrincipal,
+				Components: []string{"alice"},
+			},
+			TargRealm: "KDIAMOND.TEST",
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			checkChangePasswdData(t, c.in)
+		})
+	}
+}
+
+func checkChangePasswdData(t *testing.T, in ChangePasswdData) {
+	t.Helper()
+	der, err := MarshalChangePasswdData(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := UnmarshalChangePasswdData(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.NewPassword) != string(in.NewPassword) {
+		t.Errorf("password %q", got.NewPassword)
+	}
+	if (got.TargName != nil) != (in.TargName != nil) {
+		t.Errorf("target %v", got.TargName)
+	}
+	if got.TargRealm != in.TargRealm {
+		t.Errorf("realm %q", got.TargRealm)
+	}
+	if in.TargName != nil &&
+		!got.TargName.Equal(*in.TargName) {
+		t.Errorf("name %v", got.TargName)
+	}
+}
+
+// The outer shape is a bare SEQUENCE with no application tag, which
+// is what makes it different from every other message here and is
+// worth one assertion rather than a comment alone.
+func TestChangePasswdDataIsABareSequence(t *testing.T) {
+	der, err := MarshalChangePasswdData(ChangePasswdData{
+		NewPassword: []byte("x"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(der) == 0 || der[0] != 0x30 {
+		t.Errorf("first octet is %#x, want 0x30", der[0])
+	}
+}

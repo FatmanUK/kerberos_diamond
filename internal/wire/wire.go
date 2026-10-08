@@ -55,6 +55,8 @@ const (
 	MsgTGSReq   = 12
 	MsgTGSRep   = 13
 	MsgAPReq    = 14
+	MsgAPRep    = 15
+	MsgPriv     = 21
 	MsgKRBError = 30
 )
 
@@ -69,13 +71,22 @@ const (
 	tagTGSReq        = 12
 	tagTGSRep        = 13
 	tagAPReq         = 14
+	tagAPRep         = 15
+	tagPriv          = 21
 	tagKRBError      = 30
 
 	// tagEncASRepPart is 25 by RFC 4120, and 26 is what MIT
 	// actually writes -- see asTagEncASRepPart in asrep.go.
-	tagEncASRepPart    = 25
-	tagEncTGSRepPart   = 26
-	tagGeneralString   = 27
+	tagEncASRepPart  = 25
+	tagEncTGSRepPart = 26
+	tagGeneralString = 27
+
+	// And the two sealed halves of the application messages.
+	// tagEncAPRepPart shares its number with tagGeneralString
+	// above by coincidence: one is an application tag and the
+	// other a universal one, and they are never compared.
+	tagEncAPRepPart    = 27
+	tagEncPrivPart     = 28
 	flagsBitStringBits = 32
 )
 

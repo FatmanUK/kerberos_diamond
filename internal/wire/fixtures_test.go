@@ -456,3 +456,44 @@ const refFastResponse = "30 81 9F A0 26 30 24 30 10 A1 03 " +
 const refPAFXFastReply = "A0 29 30 27 A0 25 30 23 A0 03 " +
 	"02 01 00 A1 03 02 01 05 A2 17 04 15 6B 72 62 41 53 4E " +
 	"2E 31 20 74 65 73 74 20 6D 65 73 73 61 67 65"
+
+// encode_krb5_ap_rep
+const refAPRep = "" +
+	" 6F 33 30 31 A0 03 02 01 05 A1 03 02 01 0F A2" +
+	" 25 30 23 A0 03 02 01 00 A1 03 02 01 05 A2 17" +
+	" 04 15 6B 72 62 41 53 4E 2E 31 20 74 65 73 74" +
+	" 20 6D 65 73 73 61 67 65"
+
+// encode_krb5_ap_rep_enc_part
+const refEncAPRepPart = "" +
+	" 7B 36 30 34 A0 11 18 0F 31 39 39 34 30 36 31" +
+	" 30 30 36 30 33 31 37 5A A1 05 02 03 01 E2 40" +
+	" A2 13 30 11 A0 03 02 01 01 A1 0A 04 08 31 32" +
+	" 33 34 35 36 37 38 A3 03 02 01 11"
+
+// encode_krb5_ap_rep_enc_part(optionals NULL)
+const refEncAPRepPartNoOpt = "" +
+	" 7B 1C 30 1A A0 11 18 0F 31 39 39 34 30 36 31" +
+	" 30 30 36 30 33 31 37 5A A1 05 02 03 01 E2 40"
+
+// encode_krb5_priv
+const refKRBPriv = "" +
+	" 75 33 30 31 A0 03 02 01 05 A1 03 02 01 15 A3" +
+	" 25 30 23 A0 03 02 01 00 A1 03 02 01 05 A2 17" +
+	" 04 15 6B 72 62 41 53 4E 2E 31 20 74 65 73 74" +
+	" 20 6D 65 73 73 61 67 65"
+
+// encode_krb5_enc_priv_part
+const refEncKRBPrivPart = "" +
+	" 7C 4F 30 4D A0 0A 04 08 6B 72 62 35 64 61 74" +
+	" 61 A1 11 18 0F 31 39 39 34 30 36 31 30 30 36" +
+	" 30 33 31 37 5A A2 05 02 03 01 E2 40 A3 03 02" +
+	" 01 11 A4 0F 30 0D A0 03 02 01 02 A1 06 04 04" +
+	" 12 D0 00 23 A5 0F 30 0D A0 03 02 01 02 A1 06" +
+	" 04 04 12 D0 00 23"
+
+// encode_krb5_enc_priv_part(optionals NULL)
+const refEncKRBPrivPartNoOpt = "" +
+	" 7C 1F 30 1D A0 0A 04 08 6B 72 62 35 64 61 74" +
+	" 61 A4 0F 30 0D A0 03 02 01 02 A1 06 04 04 12" +
+	" D0 00 23"

@@ -42,6 +42,14 @@ const (
 	// even though it reaches the KDC inside a KDC request.
 	UsageAPReqAuth Usage = 11
 
+	// UsageAPRepEncPart and UsageKRBPrivEncPart are the halves of
+	// an application exchange's reply (krb5.hin:955-956). Only
+	// the password-change protocol uses them here: its reply
+	// carries an AP-REP and a KRB-PRIV, in that order, in one
+	// frame.
+	UsageAPRepEncPart   Usage = 12
+	UsageKRBPrivEncPart Usage = 13
+
 	// UsageTGSRepEncPartSessKey and UsageTGSRepEncPartSubKey
 	// encrypt a TGS-REP's enc-part. Which one applies depends on
 	// whether the client put a subkey in its authenticator, and
