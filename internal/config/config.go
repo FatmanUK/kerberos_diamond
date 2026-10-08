@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/transit"
 )
@@ -83,6 +84,16 @@ type Config struct {
 	// it, and a KDC derives its whole view of the world from the
 	// environment at startup.
 	Paths transit.Paths
+
+	// Hosts maps a host name to the realm that serves it,
+	// krb5.conf's [domain_realm] in one line. It exists for the
+	// host-based referral and has no other reader: a client
+	// asking this realm for a service on a host elsewhere is told
+	// which realm to ask instead.
+	//
+	// Nil means none, and then no referral is ever offered --
+	// which is what this KDC did before the map existed.
+	Hosts hostrealm.Map
 }
 
 // Defaults for everything that can sensibly have one. The database
@@ -147,6 +158,14 @@ func (c *Config) parse() []error {
 		errs = append(errs, fmt.Errorf("KD_CAPATHS: %w", err))
 	} else {
 		c.Paths = paths
+	}
+	hosts, err := hostrealm.Parse(
+		os.Getenv("KD_DOMAIN_REALM"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf(
+			"KD_DOMAIN_REALM: %w", err))
+	} else {
+		c.Hosts = hosts
 	}
 	return errs
 }

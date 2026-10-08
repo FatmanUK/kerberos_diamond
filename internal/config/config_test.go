@@ -179,3 +179,53 @@ func TestCapathsMalformed(t *testing.T) {
 		t.Errorf("the error does not name it: %v", err)
 	}
 }
+
+// KD_DOMAIN_REALM is read into a usable map, and a malformed one is a
+// configuration error rather than a referral that silently never
+// happens.
+func TestDomainRealm(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_DOMAIN_REALM",
+		".elsewhere.test=ELSEWHERE.TEST;d=REFREALM")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := c.Hosts.Realm("www.elsewhere.test"); got !=
+		"ELSEWHERE.TEST" {
+		t.Errorf("got %q, want ELSEWHERE.TEST", got)
+	}
+	if got := c.Hosts.Realm("x.d"); got != "REFREALM" {
+		t.Errorf("got %q, want REFREALM", got)
+	}
+}
+
+// Unset means no map, and then no host-based referral is ever
+// offered. That is the common case for a realm whose services are all
+// its own, so it must not be an error.
+func TestDomainRealmUnsetIsNotAnError(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_DOMAIN_REALM", "")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Hosts != nil {
+		t.Errorf("unset gave %v", c.Hosts)
+	}
+}
+
+func TestDomainRealmMalformed(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_DOMAIN_REALM", "elsewhere.test")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("a malformed KD_DOMAIN_REALM was accepted")
+	}
+	if !strings.Contains(err.Error(), "KD_DOMAIN_REALM") {
+		t.Errorf("the error does not name it: %v", err)
+	}
+}
