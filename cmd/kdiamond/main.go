@@ -179,6 +179,10 @@ func routes(
 		Realm:     c.Realm,
 		ClockSkew: c.ClockSkew,
 		Paths:     c.Paths,
+
+		Hosts:             c.Hosts,
+		HostBasedServices: c.HostBasedServices,
+		NoHostReferral:    c.NoHostReferral,
 	}
 	mux := http.NewServeMux()
 	mux.Handle(transport.HealthPath, &transport.Health{

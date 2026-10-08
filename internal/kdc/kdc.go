@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/transit"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
@@ -49,6 +50,16 @@ type KDC struct {
 	// by another spelling. Nil means none, and then every path is
 	// decided by the realm-naming hierarchy.
 	Paths transit.Paths
+
+	// Hosts is the host-to-realm map, krb5.conf's [domain_realm]
+	// by another spelling, and HostBasedServices and
+	// NoHostReferral are kdc.conf's keys of those names. All
+	// three exist for the host-based referral and have no other
+	// reader. An empty Hosts offers none, which is what this KDC
+	// did before the map existed.
+	Hosts             hostrealm.Map
+	HostBasedServices hostrealm.Services
+	NoHostReferral    hostrealm.Services
 }
 
 // The realm-wide lifetime defaults, from k5-int.h:132-133 by way of

@@ -94,6 +94,21 @@ type Config struct {
 	// Nil means none, and then no referral is ever offered --
 	// which is what this KDC did before the map existed.
 	Hosts hostrealm.Map
+
+	// HostBasedServices and NoHostReferral gate that lookup, and
+	// are kdc.conf's keys of the same names. The first lets an
+	// NT-UNKNOWN server name be treated as host-based, because an
+	// unknown type says nothing about whether the second
+	// component is a host; the second excludes a service from
+	// referral whatever its type, and overrides the first.
+	//
+	// Upstream combines a realm's value with [kdcdefaults]' by
+	// space-joining them (combine, kdc/main.c:173-189), so realm
+	// values supplement the defaults rather than replacing them.
+	// One realm per process means one list, so that asymmetry has
+	// nowhere to show.
+	HostBasedServices hostrealm.Services
+	NoHostReferral    hostrealm.Services
 }
 
 // Defaults for everything that can sensibly have one. The database
@@ -123,6 +138,11 @@ func Load() (*Config, error) {
 		ClockSkew:   defaultClockSkew,
 
 		MasterPassword: os.Getenv("KD_MASTER_PASSWORD"),
+
+		HostBasedServices: hostrealm.Services(
+			os.Getenv("KD_HOST_BASED_SERVICES")),
+		NoHostReferral: hostrealm.Services(
+			os.Getenv("KD_NO_HOST_REFERRAL")),
 	}
 
 	errs := c.parse()

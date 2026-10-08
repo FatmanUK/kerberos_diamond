@@ -355,16 +355,58 @@ func (k *KDC) tgsServer(s *tgsState) (int32, string) {
 
 // alternate fills in a referral server, or reports the refusal that
 // stands when there is none.
+//
+// Two referrals share this path, and upstream's order between them is
+// load-bearing (search_sprinc, do_tgs_req.c:553-572). The host-based
+// referral is tried first and only for a name that is not *already*
+// another realm's ticket-granting service; the alternate-TGS search
+// then runs either for such a name, or for a host referral whose own
+// krbtgt this realm turns out not to hold. So a host-to-realm map may
+// name a realm there is no direct trust with and the client still
+// gets an intermediate, which is a consequence of the order rather
+// than a feature of either half.
 func (k *KDC) alternate(s *tgsState) (int32, string) {
-	if !k.wantsAlternateTGS(s) {
+	// NO_REFERRAL_OPTION gates both, and every option in it names
+	// a ticket the client already holds.
+	if s.req.Body.Options&noReferralOptions != 0 {
 		return wire.ErrCodeSPrincipalUnknown,
 			"SERVER NOT FOUND"
 	}
-	srv, name, ok := k.findAlternateTGS(s)
+	if k.isCrossTGSName(*s.req.Body.SName) {
+		return k.alternateFor(s,
+			s.req.Body.SName.Components[1])
+	}
+	name, ok := k.referralTGSName(s)
+	if !ok {
+		return wire.ErrCodeSPrincipalUnknown,
+			"SERVER NOT FOUND"
+	}
+	srv, err := k.lookupTGS(name)
+	if err == nil {
+		s.referTo(srv, name)
+		return 0, ""
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return wire.ErrCodeGeneric, "LOOKING_UP_SERVER"
+	}
+	// The map named a realm this one holds no direct trust with,
+	// which upstream does not treat as the end: it runs the
+	// alternate search on the *referral* name instead (:562-571),
+	// so the client is handed an intermediate towards the realm
+	// the map named rather than told the service is unknown.
+	return k.alternateFor(s, name.Components[1])
+}
+
+// alternateFor runs the alternate-TGS search towards a realm and
+// records whatever it found, which is the tail both referrals share.
+func (k *KDC) alternateFor(
+	s *tgsState, want string,
+) (int32, string) {
+	srv, name, ok := k.findAlternateTGS(want)
 	if !ok {
 		return wire.ErrCodeSPrincipalUnknown, "UNKNOWN_SERVER"
 	}
-	s.server, s.serverName, s.referral = srv, name, true
+	s.referTo(srv, name)
 	return 0, ""
 }
 
