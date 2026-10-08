@@ -44,8 +44,10 @@ type Config struct {
 	ProxyPath string
 
 	// TLSCertFile and TLSKeyFile are the PEM certificate and
-	// private key. There is no cleartext listener, so the KDC
-	// will not start without both.
+	// private key. There is no cleartext listener, so a process
+	// that is going to serve will not start without both -- and a
+	// process that is only going to edit the database does not
+	// need them at all, which is what Role is for.
 	TLSCertFile string
 	TLSKeyFile  string
 
@@ -119,6 +121,26 @@ const (
 	defaultClockSkew = 5 * time.Minute
 )
 
+// Role is what a process intends to do with its configuration, which
+// is what decides the variables it cannot start without.
+//
+// It exists because there is one environment and more than one
+// program reading it. A KDC that is about to listen must have TLS
+// material or it would serve in the clear; a subcommand that edits
+// the database opens no socket and has no use for a certificate, and
+// demanding one of it meant every administrative test had to invent a
+// path that was never opened.
+type Role int
+
+const (
+	// Serve is the KDC daemon.
+	Serve Role = iota
+
+	// Admin is a subcommand that reads or edits the database and
+	// listens for nothing.
+	Admin
+)
+
 // ErrMissing reports a variable that has no value and no default.
 var ErrMissing = errors.New("required but unset")
 
@@ -127,7 +149,7 @@ var ErrMissing = errors.New("required but unset")
 // It returns every problem it finds rather than only the first, so
 // that a misconfigured deployment needs one restart to diagnose
 // instead of one per missing variable.
-func Load() (*Config, error) {
+func Load(role Role) (*Config, error) {
 	c := &Config{
 		DatabaseURL: os.Getenv("KD_DATABASE_URL"),
 		Realm:       os.Getenv("KD_REALM"),
@@ -146,7 +168,7 @@ func Load() (*Config, error) {
 	}
 
 	errs := c.parse()
-	errs = append(errs, c.validate()...)
+	errs = append(errs, c.validate(role)...)
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
@@ -190,23 +212,30 @@ func (c *Config) parse() []error {
 	return errs
 }
 
-// required names the variables a KDC cannot start without, paired
+// required names the variables this role cannot start without, paired
 // with the field each fills.
-func (c *Config) required() map[string]string {
-	return map[string]string{
-		"KD_DATABASE_URL":  c.DatabaseURL,
-		"KD_REALM":         c.Realm,
-		"KD_TLS_CERT_FILE": c.TLSCertFile,
-		"KD_TLS_KEY_FILE":  c.TLSKeyFile,
-
+//
+// The first three are everything: without a database there is nothing
+// to read, without a realm nothing can be named, and without the
+// master password nothing stored can be decrypted. The TLS material
+// is the listener's alone.
+func (c *Config) required(role Role) map[string]string {
+	need := map[string]string{
+		"KD_DATABASE_URL":    c.DatabaseURL,
+		"KD_REALM":           c.Realm,
 		"KD_MASTER_PASSWORD": c.MasterPassword,
 	}
+	if role == Serve {
+		need["KD_TLS_CERT_FILE"] = c.TLSCertFile
+		need["KD_TLS_KEY_FILE"] = c.TLSKeyFile
+	}
+	return need
 }
 
 // validate collects every problem with a loaded Config.
-func (c *Config) validate() []error {
+func (c *Config) validate(role Role) []error {
 	var errs []error
-	for name, value := range c.required() {
+	for name, value := range c.required(role) {
 		if strings.TrimSpace(value) == "" {
 			errs = append(errs, fmt.Errorf(
 				"%s: %w", name, ErrMissing))

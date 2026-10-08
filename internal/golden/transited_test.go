@@ -96,11 +96,11 @@ func crossHop(
 // and returns the ticket a client would then present here.
 //
 // Each hop is asked for by name rather than letting the KDC pick an
-// intermediate. The C would pick one -- find_alternate_tgs hands back
-// the middle realm's TGT when the one asked for is unknown
-// (do_tgs_req.c:371) -- but that is a path resolution the Go side
-// does not implement, and driving it here would make the comparison
-// about a feature only one side has.
+// intermediate, so that this case is about the transited field and
+// nothing else. Both sides do pick one now --
+// TestAlternateTGSMatchesTheC compares exactly that -- and leaving
+// the choice to the KDC here would fold two features into one
+// comparison.
 func twoHopTGT(
 	t *testing.T,
 	ctx context.Context,

@@ -383,8 +383,8 @@ func assertReferredByTheGoKDC(
 // It has to be told the reply names a server it did not ask for,
 // follow that, and then ask the *foreign* realm -- one it was never
 // configured to know anything about. A KDC that answered the outer
-// request with something plausible but not a referral would fail
-// here and nowhere else.
+// request with something plausible but not a referral would fail here
+// and nowhere else.
 func assertFollowedTheReferral(t *testing.T, trace, svc string) {
 	t.Helper()
 	for _, want := range []string{

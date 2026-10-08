@@ -19,9 +19,11 @@
 # The last two are named *below* KDIAMOND.TEST deliberately. Without a
 # [capaths] entry a client walks the realm hierarchy, which is a
 # convention about names, so a path through three realms exists only if
-# the names say it does. This implementation has no [capaths] yet, so
-# the fixture has to be a hierarchy for the three-realm case to work at
-# all -- and that limitation is the point of writing it down here.
+# the names say it does. The hierarchy is therefore what the
+# three-realm case exercises, and configuration is tested separately:
+# KD_CAPATHS exists now, and a configured path *replaces* the
+# hierarchical guess rather than adding to it, so a fixture that
+# configured this path would stop testing the walk.
 set -eu
 
 : "${KRB5_REALM:?}"

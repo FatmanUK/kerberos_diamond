@@ -33,7 +33,7 @@ import (
 // administrative command cannot be pointed at a different database
 // than the KDC serves by accident.
 func openStore() (*store.Store, *config.Config, error) {
-	c, err := config.Load()
+	c, err := config.Load(config.Admin)
 	if err != nil {
 		return nil, nil, err
 	}

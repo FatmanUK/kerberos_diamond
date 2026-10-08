@@ -21,7 +21,7 @@ func setMinimal(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	setMinimal(t)
 
-	c, err := Load()
+	c, err := Load(Serve)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestEmptyValueTakesDefault(t *testing.T) {
 	setMinimal(t)
 	t.Setenv("KD_LISTEN_ADDR", "")
 
-	c, err := Load()
+	c, err := Load(Serve)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestLoadReportsEveryMissingVariable(t *testing.T) {
 	t.Setenv("KD_TLS_KEY_FILE", "")
 	t.Setenv("KD_MASTER_PASSWORD", "")
 
-	_, err := Load()
+	_, err := Load(Serve)
 	if err == nil {
 		t.Fatal("Load succeeded with nothing set")
 	}
@@ -89,7 +89,7 @@ func TestWhitespaceIsMissing(t *testing.T) {
 	setMinimal(t)
 	t.Setenv("KD_REALM", "   ")
 
-	if _, err := Load(); !errors.Is(err, ErrMissing) {
+	if _, err := Load(Serve); !errors.Is(err, ErrMissing) {
 		t.Errorf("whitespace realm accepted: %v", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestClockSkew(t *testing.T) {
 			setMinimal(t)
 			t.Setenv("KD_CLOCK_SKEW", tc.set)
 
-			c, err := Load()
+			c, err := Load(Serve)
 			if !tc.ok && err == nil {
 				t.Fatalf("accepted %q", tc.set)
 			}
@@ -137,7 +137,7 @@ func TestCapaths(t *testing.T) {
 	t.Setenv("KD_CAPATHS",
 		"ANL.GOV>NERSC.GOV=ES.NET;ANL.GOV>ES.NET=.")
 
-	c, err := Load()
+	c, err := Load(Serve)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestCapathsUnsetIsNotAnError(t *testing.T) {
 	setMinimal(t)
 	t.Setenv("KD_CAPATHS", "")
 
-	c, err := Load()
+	c, err := Load(Serve)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestCapathsMalformed(t *testing.T) {
 	setMinimal(t)
 	t.Setenv("KD_CAPATHS", "ANL.GOV>NERSC.GOV")
 
-	_, err := Load()
+	_, err := Load(Serve)
 	if err == nil {
 		t.Fatal("a malformed KD_CAPATHS was accepted")
 	}
@@ -188,7 +188,7 @@ func TestDomainRealm(t *testing.T) {
 	t.Setenv("KD_DOMAIN_REALM",
 		".elsewhere.test=ELSEWHERE.TEST;d=REFREALM")
 
-	c, err := Load()
+	c, err := Load(Serve)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestDomainRealmUnsetIsNotAnError(t *testing.T) {
 	setMinimal(t)
 	t.Setenv("KD_DOMAIN_REALM", "")
 
-	c, err := Load()
+	c, err := Load(Serve)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -221,11 +221,62 @@ func TestDomainRealmMalformed(t *testing.T) {
 	setMinimal(t)
 	t.Setenv("KD_DOMAIN_REALM", "elsewhere.test")
 
-	_, err := Load()
+	_, err := Load(Serve)
 	if err == nil {
 		t.Fatal("a malformed KD_DOMAIN_REALM was accepted")
 	}
 	if !strings.Contains(err.Error(), "KD_DOMAIN_REALM") {
 		t.Errorf("the error does not name it: %v", err)
+	}
+}
+
+// An administrative subcommand opens no socket, so it must load
+// without TLS material rather than being made to invent a certificate
+// path that is never read.
+//
+// The gap this closes was visible in the tests that found it: every
+// case in internal/golden/admin_test.go used to hand the binary
+// /unused/cert.pem and /unused/key.pem, which existed only to get
+// past a requirement the command had no use for.
+func TestAdminNeedsNoTLSMaterial(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_TLS_CERT_FILE", "")
+	t.Setenv("KD_TLS_KEY_FILE", "")
+
+	c, err := Load(Admin)
+	if err != nil {
+		t.Fatalf("Load(Admin): %v", err)
+	}
+	if c.Realm != "KDIAMOND.TEST" {
+		t.Errorf("Realm = %q", c.Realm)
+	}
+	// And the serving role still refuses the same environment,
+	// because a KDC that started without them would listen in the
+	// clear.
+	if _, err := Load(Serve); err == nil {
+		t.Fatal("Load(Serve) accepted no TLS material")
+	}
+}
+
+// What every role needs is the database, the realm and the master
+// password: without them there is nothing to read, nothing to name
+// and nothing that can be decrypted. Each is reported by name, and
+// all of them at once.
+func TestAdminStillNeedsTheRest(t *testing.T) {
+	t.Setenv("KD_DATABASE_URL", "")
+	t.Setenv("KD_REALM", "")
+	t.Setenv("KD_MASTER_PASSWORD", "")
+
+	_, err := Load(Admin)
+	if err == nil {
+		t.Fatal("an empty environment was accepted")
+	}
+	for _, name := range []string{
+		"KD_DATABASE_URL", "KD_REALM", "KD_MASTER_PASSWORD",
+	} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("the error does not name %s: %v",
+				name, err)
+		}
 	}
 }

@@ -33,6 +33,13 @@ that have aged worst in the C:
   malformed frame, a padata-free single round trip, the PA-ENC-TIMESTAMP path,
   TCP-only transport, a TGT in the credential cache, and a wrong password
   being refused as a wrong password.
+- **Cross-realm is complete, and the host-based referral closed it.**
+  A stock `kvno -C` asks the Go KDC for a host-based service in a
+  domain the realm maps elsewhere, is handed a cross-realm
+  ticket-granting ticket, follows it, and comes back with a ticket for
+  a realm it was never configured to know about — every hop the
+  client's own. `KD_DOMAIN_REALM` is `[domain_realm]` folded onto one
+  line, the way `KD_CAPATHS` is `[capaths]`.
 - **FAST works, both exchanges, and a stock `kinit -T` proves it.** An
   unmodified client authenticates through an armored tunnel against this KDC,
   answering an encrypted challenge — which is the only pre-authentication
@@ -151,15 +158,17 @@ Everything the plan file listed is done, so this list is now the live one.
 
 1. ~~**The TGS cases nothing issues yet**~~ — forwarding, proxying and
    user-to-user. Done, and they found three divergences between them; see §6.
-2. ~~**`[capaths]` and the alternate-TGS search.**~~ Done. Cross-realm is
-   complete except for the host-based referral below.
+2. ~~**`[capaths]` and the alternate-TGS search.**~~ Done, and with item
+   4 below cross-realm is complete.
 3. ~~**FAST** (RFC 6113).~~ Done, both exchanges, with encrypted challenge
    and the advertisement. **The harness now has no exemptions at all.**
-4. **The host-based referral**, `find_referral_tgs` (`do_tgs_req.c:487-523`):
-   a client asking for `host/www.example.com` in the wrong realm is told
-   which realm to ask instead, from a host-to-realm map. It needs a
-   `[domain_realm]` equivalent, which is a configuration surface this
-   project does not have yet, and it is the only part of cross-realm left.
+4. ~~**The host-based referral**, `find_referral_tgs`
+   (`do_tgs_req.c:482-523`).~~ Done, with `KD_DOMAIN_REALM` as the
+   `[domain_realm]` equivalent it needed. **Cross-realm is now
+   complete**, and a stock `kvno -C` proves it: asked for a service in
+   a domain this realm maps elsewhere, the client is handed a
+   cross-realm TGT, follows it, and comes back with a ticket for a
+   realm it was never configured to know about.
 5. **A `kadmin` protocol**, for provisioning from off-host. The `kdiamond`
    subcommands need a shell on the KDC's machine; something external
    eventually will not have one.
@@ -241,7 +250,7 @@ are not "fixed" back by accident.
 - **No OpenSSL anywhere, including in the C oracle.** Upstream's `k5tls`
   plugin is the only part of Kerberos 5 that wants it — core crypto defaults
   to `CRYPTO_IMPL=builtin` (`src/configure.ac:266-273`) — so the oracle is
-  built `--with-tls-impl=no`. `configure.ac:296-322` accepts only `openssl`,
+  built `--with-tls-impl=no`. `configure.ac:290-331` accepts only `openssl`,
   `auto` or `no`, and `auto` links libssl if it happens to be installed, so
   the flag is passed explicitly.
 - **`cmd/kdiamond-proxy` carries TLS for clients that cannot.** A client
@@ -375,21 +384,55 @@ are not "fixed" back by accident.
   has *something* to offer towards everywhere, and the dead end is found
   further along rather than at the first hop. The C KDC was asked and behaves
   identically.
-- **No host-based referral.** `find_referral_tgs` (`do_tgs_req.c:487-523`)
-  answers a client that asked for `host/www.example.com` in the wrong realm by
-  naming the realm to ask instead, which needs a host-to-realm map — a
-  `[domain_realm]` equivalent, and a configuration surface this project does
-  not have. A request for an ordinary service that does not exist is
+- **The host-based referral is implemented, and the two referrals are
+  one path.** `find_referral_tgs` (`do_tgs_req.c:482-523`) answers a
+  client that asked for `host/www.example.com` here by naming the realm
+  to ask instead, from `KD_DOMAIN_REALM`. Upstream's order between it
+  and the alternate-TGS search is load-bearing (`search_sprinc`,
+  `:553-572`): the host referral runs first and only for a name that is
+  not already another realm's krbtgt, and the alternate search then runs
+  either for such a name *or* for a host referral whose own krbtgt this
+  realm does not hold — so a map may name a realm there is no direct
+  trust with and the client still gets an intermediate towards it. A
+  request for an ordinary service that does not exist is still
   `S_PRINCIPAL_UNKNOWN`, as it is upstream when its own lookup comes up
-  empty.
+  empty, and so is every refusal inside the referral: `search_sprinc`
+  flattens everything but a locked database to that one code
+  (`:573-578`).
+- **Only `[domain_realm]` of `krb5_get_host_realm`, because that is all
+  the KDC uses.** The lookup is a pluggable interface with four modules
+  tried in order (`lib/krb5/os/hostrealm.c:69-94`) and exactly one of
+  them implements the method the KDC calls; `hostrealm_dns.c` and
+  `hostrealm_domain.c` implement `fallback_realm`, which only
+  `krb5_get_fallback_host_realm` (`:400-447`) reaches and which is a
+  client-side API. So the `_kerberos` TXT lookup, `realm_try_domains`
+  and the upcased-parent-domain default are absent because the KDC
+  never asks for them. Two details of what remains are transcribed
+  rather than paraphrased: the suffix walk tries the dotted form *and*
+  the bare suffix at every level, dot first, down to the last label
+  alone (`hostrealm_profile.c:64`), and `k5_is_numeric_address`
+  (`hostrealm.c:316-339`) is looser than parsing — digits and dots with
+  *exactly* three dots, or anything holding a colon — so `1.2.3` is
+  looked up and `::1` is not. A `net.ParseIP` would disagree on both,
+  and the symptom would be a referral that should have been offered and
+  silently was not.
 
 **The AS exchange:**
 
 - **No Windows PAC.** A stock MIT KDC puts a signed MS-PAC in every AS
   ticket unless the client declines one (`kdc/kdc_authdata.c:479-493`,
   `include_pac_p` at `kdc/kdc_preauth.c:1581-1609`). This KDC issues none:
-  MS-PAC is NDR-encoded Windows interop carrying two keyed checksums, and it
-  is nowhere near the AS slice. The golden harness declines the PAC with
+  The deprioritisation is the one in **Priorities** below and not a
+  judgement about size — reading `pac.c` for the plan that follows this
+  one found the earlier description here wrong on both counts. There is
+  no NDR in it at all (`authdata.h:46-48` says buffer contents are left
+  to the application; the only NDR upstream has is `kdc/ndr.c`, for
+  `S4U_DELEGATION_INFO` alone), and there are three keyed checksums, or
+  four on a service ticket. A stock MIT KDC also emits no `LOGON_INFO`
+  buffer at all: only the *test* KDB module implements `issue_pac`
+  (`plugins/kdb/test/kdb_test.c:820`), so with db2 the dispatch returns
+  `KRB5_PLUGIN_OP_NOTSUPP` and `handle_pac` swallows it
+  (`kdc/kdc_authdata.c:511-512`). The golden harness declines the PAC with
   `PA-PAC-REQUEST(false)` — something an unmodified client is entitled to do
   — so the comparison covers the whole reply with no skipped fields, and the
   gap is recorded here instead of hidden in an exemption. A Windows client
@@ -730,6 +773,23 @@ tests. It is green.
   mismatched client name, a stale clock, and a request asking for a flag its
   TGT does not carry. Each asserts the *specific* protocol error, because
   they are different codes and a client acts on them differently.
+- **The host-based referral** — covered three ways. The gate matrix is
+  `tests/t_referral.py:41-93` transcribed and runs against no database
+  at all, because `is_referral_req` reaches none: the name types at
+  `:41-45`, the `host_based_services` spellings at `:53-69`, and
+  `no_host_referral` overriding it at `:73-93`. The host-to-realm
+  lookup is anchored to `tests/t_hostrealm.py`, which is a written spec
+  for that and nothing else — every profile-module assertion at
+  `:53-69`, case for case, with two reading differently here for a
+  reason that is not a disagreement: upstream runs four modules, so an
+  address falls *through* to one that answers with the host's
+  components, and with only the profile module nothing answers. Then
+  the differential case and a stock `kvno -C`. The one refusal that
+  cannot be driven from the oracle is the map pointing back at the
+  realm the request named — upstream's fix for its bug #7483 — because
+  it would need a second `[domain_realm]` entry in the oracle's own
+  kdc.conf; `internal/kdc` covers it, where the map is a test's to
+  choose.
 - **Configured realm paths** — covered against upstream's own documented
   example (`walk_rtree.c:186-210`), transcribed rather than invented, plus the
   properties that matter: that configuration *replaces* the hierarchical guess

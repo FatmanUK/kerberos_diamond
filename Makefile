@@ -30,6 +30,13 @@ KDC_PORT    ?= 8088
 PROXY_PATH  ?= KdcProxy
 REALM       ?= KDIAMOND.TEST
 
+# The master key is derived from this and the realm, with no stash
+# file, so a KDC cannot start without it and neither can an
+# administrative command. It is overridable and the default is
+# useless on purpose: a real deployment sets its own, and it is the
+# one secret in the whole configuration.
+MASTER_PW   ?= master
+
 # Postgres, run as a container for local work.
 DB_NAME     ?= kdiamond
 # Tests get a database of their own. They isolate themselves into a
@@ -315,6 +322,7 @@ run: build certs db-up ## Run the KDC on the host
 	KD_PROXY_PATH="$(PROXY_PATH)" \
 	KD_TLS_CERT_FILE=$(CERT_FILE) \
 	KD_TLS_KEY_FILE=$(KEY_FILE) \
+	KD_MASTER_PASSWORD="$(MASTER_PW)" \
 	./$(BINARY) serve
 
 # --- the golden-output oracle -----------------------------------------
@@ -408,8 +416,10 @@ pod-run: pod-build certs db-up ## Run the KDC in a container
 		-p $(KDC_PORT):8088 \
 		-e KD_DATABASE_URL="$(DB_URL_POD)" \
 		-e KD_REALM="$(REALM)" \
+		-e KD_PROXY_PATH="$(PROXY_PATH)" \
 		-e KD_TLS_CERT_FILE=/etc/kdiamond/tls/cert.pem \
 		-e KD_TLS_KEY_FILE=/etc/kdiamond/tls/key.pem \
+		-e KD_MASTER_PASSWORD="$(MASTER_PW)" \
 		-v ./$(TLS_DIR):/etc/kdiamond/tls:ro,z \
 		$(IMAGE):$(TAG) serve
 	@echo "waiting for the KDC..."

@@ -101,7 +101,7 @@ func run(args []string) error {
 // deployment should fail on its environment, which is the error it
 // can actually act on, rather than after binding a port.
 func serve() error {
-	c, err := config.Load()
+	c, err := config.Load(config.Serve)
 	if err != nil {
 		return err
 	}

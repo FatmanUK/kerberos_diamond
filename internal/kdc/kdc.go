@@ -1,15 +1,17 @@
 // Package kdc answers Kerberos requests.
 //
-// Only the AS exchange is here: a client with no ticket asking for
-// one, which is the whole of what a kinit does. The TGS exchange
-// reuses internal/wire and internal/crypto and is not yet written.
+// Both exchanges are here: the AS exchange, where a client with no
+// ticket asks for one, and the TGS exchange, where it spends that
+// ticket for another. FAST wraps either of them, and cross-realm,
+// renewal, validation, forwarding, proxying, user-to-user and both
+// referrals are all the TGS exchange's.
 //
 // The upstream spine this follows is dispatch (kdc/dispatch.c:89)
 // into process_as_req (kdc/do_as_req.c:470) into
-// finish_process_as_req (:194). That last one is a 150-line function
-// with a callback continuation; it is split up here rather than
-// translated shape-for-shape, so the function names are the map back
-// to it.
+// finish_process_as_req (:194), and process_tgs_req
+// (kdc/do_tgs_req.c:624). Those are long functions with callback
+// continuations; they are split up here rather than translated
+// shape-for-shape, so the function names are the map back to them.
 package kdc
 
 import (

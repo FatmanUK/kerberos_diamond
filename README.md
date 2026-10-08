@@ -107,20 +107,18 @@ DB=postgres://kdiamond:kdiamond@localhost:55433/kdiamond
 export KD_DATABASE_URL="$DB?sslmode=disable"
 export KD_REALM=KDIAMOND.TEST
 export KD_MASTER_PASSWORD=choose-something-better-than-this
-export KD_TLS_CERT_FILE=deploy/tls/cert.pem
-export KD_TLS_KEY_FILE=deploy/tls/key.pem
 make build
 ./kdiamond addprinc -pw tgtpassword krbtgt/KDIAMOND.TEST
 ./kdiamond addprinc -pw userpassword alice
 make run
 ```
 
-Two things in that are warts rather than design, and are written here
-because they are what actually happens. `make run` does not set
-`KD_MASTER_PASSWORD` itself, so exporting it is required. And the
-administrative subcommands validate the *whole* configuration, so
-`kdiamond addprinc` refuses to run without TLS material it has no use for.
-Both are on the list to fix.
+`make run` sets `KD_MASTER_PASSWORD` from the Makefile's own
+`MASTER_PW`, which defaults to something useless on purpose; exporting
+your own overrides it for the subcommands above. The administrative
+subcommands ask only for what they use -- a database, a realm and the
+master password -- and need no TLS material, because they open no
+socket.
 
 A client then needs the shim, because MS-KKDCP is the KDC's only transport
 and most Kerberos clients are built without a TLS module:

@@ -34,13 +34,17 @@ func buildKdiamond(t *testing.T) string {
 // database flag, so a command cannot be pointed at a different
 // database than the KDC serves by accident -- which means a test has
 // to hand them the same environment a deployment would.
+//
+// And that is the whole of it: these commands open no socket, so they
+// ask for no TLS material. They used to be handed /unused/cert.pem
+// and a key beside it, paths that were never opened and existed only
+// to get past a requirement belonging to the listener. config.Admin
+// is what makes that unnecessary.
 func adminEnv(url string) []string {
 	return append(os.Environ(),
 		"KD_DATABASE_URL="+url,
 		"KD_REALM="+Realm,
 		"KD_MASTER_PASSWORD="+MasterPass,
-		"KD_TLS_CERT_FILE=/unused/cert.pem",
-		"KD_TLS_KEY_FILE=/unused/key.pem",
 	)
 }
 
