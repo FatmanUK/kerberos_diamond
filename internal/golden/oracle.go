@@ -74,6 +74,31 @@ const (
 	// same on both sides, so one password gives one key.
 	InterRealmPassword = "interrealmpassword"
 
+	// LocalForeignPassword is the *other* direction of that
+	// trust, krbtgt/<ForeignRealm>@<Realm>, which the host-based
+	// referral needs and nothing before it did: a client sent
+	// from here to there carries a ticket sealed with this key. A
+	// separate principal from the one above and so a separate
+	// password, so that a bug confusing the two directions cannot
+	// hide.
+	LocalForeignPassword = "localforeignpassword"
+
+	// ReferralDomain is the DNS domain the oracle's kdc.conf maps
+	// to ForeignRealm, and ReferralService a host-based service
+	// that exists in that realm alone.
+	//
+	// The stanza is in kdc.conf and deliberately *not* krb5.conf,
+	// which decides whether the referral is exercised at all: the
+	// KDC's profile is kdc.conf prepended to the usual file list
+	// (add_kdc_config_file, lib/krb5/os/init_os_ctx.c:339-366),
+	// so either file reaches it -- but a mapping in krb5.conf
+	// would also let the *client* resolve the host's realm
+	// itself, and it would then ask the right realm directly and
+	// never need a referral. Upstream's own fixture puts it in
+	// kdc_conf for that reason (tests/t_referral.py:5-11).
+	ReferralDomain      = "referral.test"
+	ReferralSvcPassword = "referralsvcpassword"
+
 	// MidRealm and FarRealm are the other two realms the oracle
 	// serves, arranged as a hierarchy below Realm so that a path
 	// through three of them exists without a [capaths] entry: the
@@ -114,6 +139,10 @@ const (
 // ServiceName is the service principal's components. It is a var
 // rather than a const because a principal name is a list.
 var ServiceName = []string{"host", "service.kdiamond.test"}
+
+// ReferralService is the host-based service that exists only in the
+// foreign realm, in a domain this realm's KDC maps there.
+var ReferralService = []string{"host", "www." + ReferralDomain}
 
 // Oracle is a running C KDC.
 type Oracle struct {

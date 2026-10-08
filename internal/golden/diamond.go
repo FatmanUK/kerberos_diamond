@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
 	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
@@ -86,6 +87,7 @@ func StartDiamondAt(
 		Realm:     Realm,
 		ClockSkew: 5 * time.Minute,
 		Now:       now,
+		Hosts:     referralHosts(),
 	}
 	return d, nil
 }
@@ -155,6 +157,9 @@ func provision(
 		}
 	}
 	if err := provisionTrust(ctx, s, mkey); err != nil {
+		return err
+	}
+	if err := provisionReferral(ctx, s, mkey); err != nil {
 		return err
 	}
 	return provisionFarRealm(ctx, s, mkey)
@@ -292,4 +297,39 @@ func OpenDiamond(
 		Now:       now,
 	}
 	return d, nil
+}
+
+// referralHosts is the host-to-realm map the oracle's kdc.conf
+// carries, so that both implementations answer a host-based referral
+// from the same configuration. Without it the comparison would
+// measure the fixture.
+func referralHosts() hostrealm.Map {
+	m, err := hostrealm.Parse(
+		"." + ReferralDomain + "=" + ForeignRealm)
+	if err != nil {
+		panic(err)
+	}
+	return m
+}
+
+// provisionReferral adds the outbound half of the trust with the
+// foreign realm, which is what a host-based referral hands a client:
+// krbtgt/<ForeignRealm>@<Realm>, sealed with a key both realms hold.
+//
+// The inbound half is a different principal and has been there since
+// cross-realm landed. Every earlier case used that one, because every
+// earlier case had a client of the foreign realm reaching a service
+// here; a referral goes the other way.
+func provisionReferral(
+	ctx context.Context,
+	s *store.Store,
+	mkey store.MasterKey,
+) error {
+	p := store.NewPrincipal(Realm,
+		[]string{"krbtgt", ForeignRealm})
+	err := p.SetPassword(mkey, LocalForeignPassword, 1)
+	if err != nil {
+		return err
+	}
+	return s.Save(ctx, p)
 }

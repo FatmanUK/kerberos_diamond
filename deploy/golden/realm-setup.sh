@@ -191,11 +191,24 @@ EOF
 EOF
 } >"$KRB5_CONFIG"
 
+# The [domain_realm] stanza below is in kdc.conf and deliberately not
+# in krb5.conf, and that choice is what decides whether the host-based
+# referral is exercised at all. The KDC's profile is kdc.conf
+# prepended to the usual file list (add_kdc_config_file,
+# lib/krb5/os/init_os_ctx.c:339-366), so either file would reach the
+# KDC -- but a mapping in krb5.conf would also let the *client*
+# resolve the host's realm itself, and the client would then ask the
+# right realm directly and never need a referral. Upstream's own
+# referral test puts it in kdc_conf for that reason
+# (tests/t_referral.py:5-11).
 {
 	cat <<EOF
 [kdcdefaults]
 	kdc_listen = ""
 	kdc_tcp_listen = $KRB5_KDC_PORT
+
+[domain_realm]
+	.$KRB5_REFERRAL_DOMAIN = $KRB5_FOREIGN_REALM
 
 [realms]
 EOF
@@ -304,6 +317,28 @@ trust "$KRB5_FOREIGN_REALM" "$KRB5_FOREIGN_REALM" "$KRB5_REALM" \
 	"$KRB5_INTERREALM_PASSWORD"
 trust "$KRB5_REALM" "$KRB5_FOREIGN_REALM" "$KRB5_REALM" \
 	"$KRB5_INTERREALM_PASSWORD"
+
+# The *other* direction of the same trust, which the host-based
+# referral needs and nothing before it did. A cross-realm
+# ticket-granting ticket that takes a client from here to there is
+# krbtgt/FOREIGN.TEST@KDIAMOND.TEST, held at both ends -- a separate
+# principal from the krbtgt/KDIAMOND.TEST@FOREIGN.TEST above, which
+# is the trust in the direction every earlier case used. Its own
+# password again, so that a bug confusing the two directions cannot
+# hide.
+trust "$KRB5_REALM" "$KRB5_REALM" "$KRB5_FOREIGN_REALM" \
+	"$KRB5_LOCAL_FOREIGN_PASSWORD"
+trust "$KRB5_FOREIGN_REALM" "$KRB5_REALM" "$KRB5_FOREIGN_REALM" \
+	"$KRB5_LOCAL_FOREIGN_PASSWORD"
+
+# A host-based service that exists *only* in the foreign realm, in a
+# domain [domain_realm] maps there. Asked for it, this realm has
+# nothing and must say which realm to ask instead; the client then
+# finds it over there. It mirrors upstream's own referral fixture,
+# which creates a/x.d in REFREALM alone (tests/t_referral.py:11).
+kadm "$KRB5_FOREIGN_REALM" \
+	"addprinc -pw $KRB5_REFERRAL_SVC_PASSWORD -kvno 1 \
+	$KRB5_REFERRAL_SERVICE@$KRB5_FOREIGN_REALM"
 
 # The three-realm path: a client in the far realm reaches a service here
 # through the middle one, and the middle one is what has to appear in
