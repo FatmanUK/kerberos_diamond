@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FatmanUK/kerberos_diamond/internal/acl"
 	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/transit"
@@ -111,6 +112,13 @@ type Config struct {
 	// nowhere to show.
 	HostBasedServices hostrealm.Services
 	NoHostReferral    hostrealm.Services
+
+	// AdminACL is who may administer what, kadmin's kadm5.acl
+	// folded onto one line. Nil permits nothing but the
+	// self-service operations -- a user changing its own password
+	// and reading its own entry -- which is the right default for
+	// a surface that provisions principals.
+	AdminACL acl.ACL
 }
 
 // Defaults for everything that can sensibly have one. The database
@@ -179,15 +187,7 @@ func Load(role Role) (*Config, error) {
 // collects their faults rather than returning at the first.
 func (c *Config) parse() []error {
 	var errs []error
-	if d := os.Getenv("KD_CLOCK_SKEW"); d != "" {
-		parsed, err := time.ParseDuration(d)
-		if err != nil {
-			errs = append(errs, fmt.Errorf(
-				"KD_CLOCK_SKEW: %w", err))
-		} else {
-			c.ClockSkew = parsed
-		}
-	}
+	errs = append(errs, c.parseSkew()...)
 	kdf, err := store.ParseMasterKDF(
 		os.Getenv("KD_MASTER_KDF"))
 	if err != nil {
@@ -195,6 +195,29 @@ func (c *Config) parse() []error {
 	} else {
 		c.MasterKDF = kdf
 	}
+	return append(errs, c.parseTables()...)
+}
+
+// parseSkew reads the one duration.
+func (c *Config) parseSkew() []error {
+	d := os.Getenv("KD_CLOCK_SKEW")
+	if d == "" {
+		return nil
+	}
+	parsed, err := time.ParseDuration(d)
+	if err != nil {
+		return []error{fmt.Errorf("KD_CLOCK_SKEW: %w", err)}
+	}
+	c.ClockSkew = parsed
+	return nil
+}
+
+// parseTables reads the structured variables -- the ones whose syntax
+// is a krb5.conf section folded onto one line. Each parser lives in
+// the package that owns the type, and this only names the variable in
+// the error.
+func (c *Config) parseTables() []error {
+	var errs []error
 	paths, err := transit.ParsePaths(os.Getenv("KD_CAPATHS"))
 	if err != nil {
 		errs = append(errs, fmt.Errorf("KD_CAPATHS: %w", err))
@@ -208,6 +231,18 @@ func (c *Config) parse() []error {
 			"KD_DOMAIN_REALM: %w", err))
 	} else {
 		c.Hosts = hosts
+	}
+	// The attribute specifiers in a restriction are
+	// internal/store's table, which internal/acl deliberately
+	// does not import -- so it is handed over here, once, before
+	// anything is parsed.
+	acl.SetAttrFunc(store.AttrMask)
+	list, err := acl.Parse(os.Getenv("KD_ADMIN_ACL"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf(
+			"KD_ADMIN_ACL: %w", err))
+	} else {
+		c.AdminACL = list
 	}
 	return errs
 }

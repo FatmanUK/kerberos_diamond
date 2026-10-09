@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FatmanUK/kerberos_diamond/internal/acl"
 	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/transit"
@@ -62,6 +63,12 @@ type KDC struct {
 	Hosts             hostrealm.Map
 	HostBasedServices hostrealm.Services
 	NoHostReferral    hostrealm.Services
+
+	// AdminACL decides who may administer what. Nil permits
+	// nothing but the self-service operations, which is what lets
+	// a user change its own password in a realm that has
+	// configured no list at all.
+	AdminACL acl.ACL
 }
 
 // The realm-wide lifetime defaults, from k5-int.h:132-133 by way of

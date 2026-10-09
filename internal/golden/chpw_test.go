@@ -367,3 +367,76 @@ func attachHistory(
 		t.Fatal(err)
 	}
 }
+
+// TestStockKpasswdNamesWhosePasswordItChanges records what `kpasswd
+// <principal>` actually does, which is not what it looks like and
+// which the first draft of this test got wrong.
+//
+// It is a *self* change for the principal named: kpasswd gets initial
+// credentials for that principal, prompting for its current password,
+// and then changes it. The argument says whose password to change,
+// not who is doing the changing -- so an administrator cannot use it
+// to set somebody else's.
+//
+// **RFC 3244 set-password therefore has no stock client to test
+// against, anywhere.** kpasswd only ever calls krb5_change_password,
+// which is version 1 (clients/kpasswd/kpasswd.c:152), and nothing in
+// upstream's whole tree calls krb5_set_password -- it is a library
+// entry point for third parties, with the server side shipped and no
+// caller. The 0xff80 path here is implemented from the specification
+// and anchored by internal/kdc's own cases, and that is worth saying
+// plainly rather than leaving a test that appeared to cover it.
+//
+// The first draft of this test appeared to pass for a worse reason
+// still: the fixture gives `user` and `preauth` the same password, so
+// a self change for one looked like an administrative change by the
+// other.
+func TestStockKpasswdNamesWhosePasswordItChanges(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 60*time.Second)
+	defer cancel()
+
+	env := pointAtDiamondWith(t, ctx, o, "setpw",
+		changePWConf)
+	env = append(env, "KRB5_TRACE=/dev/stderr")
+
+	const newPW = "changed-by-its-owner"
+	in := UserPassword + "\n" + newPW + "\n" + newPW + "\n"
+	out, err := o.ExecEnv(ctx, env, in, "kpasswd",
+		PreauthName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("kpasswd failed: %v\n%s", err, out)
+	}
+	// The trace names the principal it authenticated *as*, which
+	// is the one on the command line.
+	want := "Getting initial credentials for " +
+		PreauthName + "@" + Realm
+	if !strings.Contains(out, want) {
+		t.Errorf("the trace has no %q:\n%s", want, out)
+	}
+	// And it is version 1, not RFC 3244's: the client chose.
+	if strings.Contains(out, "Setting password for") {
+		t.Errorf("kpasswd used set-password:\n%s", out)
+	}
+	assertPreauthPassword(t, ctx, o, env, newPW)
+}
+
+// assertPreauthPassword checks the preauth principal's password by
+// using it, which needs the pre-authentication round trip a stock
+// kinit does for us.
+func assertPreauthPassword(
+	t *testing.T,
+	ctx context.Context,
+	o *Oracle,
+	env []string,
+	password string,
+) {
+	t.Helper()
+	out, err := o.ExecEnv(ctx, env, password+"\n", "kinit",
+		PreauthName+"@"+Realm)
+	if err != nil {
+		t.Errorf("kinit with %q failed: %v\n%s",
+			password, err, out)
+	}
+}

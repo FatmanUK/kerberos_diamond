@@ -148,3 +148,25 @@ func AttrSpecNames() []string {
 	sort.Strings(out)
 	return out
 }
+
+// AttrMask reads one attribute specifier into the bits it sets and
+// the bits it clears, which is what an access-control restriction
+// needs: it has to be combined with other restrictions before being
+// applied, so it cannot just mutate a value the way ApplyAttr does.
+//
+// Both are returned rather than one, because most of these specifiers
+// are inverted -- +forwardable *clears* DISALLOW_FORWARDABLE -- so
+// "the bits a + sets" is not a well-formed question.
+func AttrMask(spec string) (set, clear uint32, err error) {
+	// Applied to zero, the result is the bits a + would have set.
+	on, err := ApplyAttr(0, spec)
+	if err != nil {
+		return 0, 0, err
+	}
+	// Applied to all-ones, the complement is what it clears.
+	off, err := ApplyAttr(^uint32(0), spec)
+	if err != nil {
+		return 0, 0, err
+	}
+	return on, ^off, nil
+}

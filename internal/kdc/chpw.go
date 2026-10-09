@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 
+	"github.com/FatmanUK/kerberos_diamond/internal/acl"
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
@@ -75,6 +76,10 @@ func (k *KDC) changePW(
 	if code != wire.KPasswdSuccess {
 		return code, text
 	}
+	if code, text := k.authorisePW(id,
+		target); code != wire.KPasswdSuccess {
+		return code, text
+	}
 	return k.setPassword(id, target, password)
 }
 
@@ -140,15 +145,13 @@ func changePWTarget(
 			wire.KPasswdSuccess, ""
 	}
 	// Setting somebody else's password is an administrative act
-	// and goes through the same authorisation as kadmin's own cpw
-	// -- auth(OP_CPW, client, target), kadmin/server/misc.c:51.
-	// There is nothing to consult yet, so it is refused rather
-	// than allowed: a surface that let any authenticated
-	// principal re-key any other would be worse than one that
-	// does not do it at all.
-	return "", "", wire.KPasswdAccessDenied,
-		"Setting another principal's password is not " +
-			"supported yet"
+	// and the authorisation is the same as kadmin's own cpw --
+	// auth(OP_CPW, client, target), kadmin/server/misc.c:51 --
+	// which is why the access-control list reaches here at all.
+	return string(c.NewPassword),
+		store.UnparseName(c.TargRealm,
+			c.TargName.Components),
+		wire.KPasswdSuccess, ""
 }
 
 // setPassword is the change itself, with the one check a self change
@@ -165,11 +168,6 @@ func (k *KDC) setPassword(
 	id *Identity,
 	target, password string,
 ) (uint16, string) {
-	if !id.Initial {
-		return wire.KPasswdInitialNeeded,
-			"Changing your own password requires an " +
-				"initial ticket"
-	}
 	ctx := context.Background()
 	p, err := k.Store.Lookup(ctx, target)
 	if errors.Is(err, store.ErrNotFound) {
@@ -474,6 +472,49 @@ func (k *KDC) checkPolicy(
 	}
 	if err != nil {
 		return wire.KPasswdHardError, "History unavailable"
+	}
+	return wire.KPasswdSuccess, ""
+}
+
+// authorisePW decides whether this client may set this target's
+// password, which is the one place in the protocol where the
+// access-control list is consulted.
+//
+// Two rules, and they are schpw_util_wrapper's own
+// (kadmin/server/misc.c:13-57). A change of one's *own* password
+// needs an initial ticket, and that requirement is what makes it mean
+// something: a ticket obtained from a TGT proves only that the holder
+// had a TGT, which a stolen credential cache also proves
+// (check_self_keychange, server_stubs.c:369-381). Anybody else's
+// needs the c privilege in the list, and no initial ticket -- because
+// an administrator is not proving who they are to the password
+// service, they are proving they are an administrator.
+//
+// Note what does *not* belong here. changepw_not_self
+// (server_stubs.c:345-354) forbids a client that arrived on
+// kadmin/changepw from touching another principal, and it is a rule
+// of the *RPC* surface rather than of this one: there the acceptor
+// name distinguishes kadmin/admin from kadmin/changepw, while here
+// every request arrives on kadmin/changepw by construction. Putting
+// it here would make RFC 3244 set-password impossible, which was the
+// first draft's mistake.
+func (k *KDC) authorisePW(
+	id *Identity,
+	target string,
+) (uint16, string) {
+	client := id.Name()
+	if client == target {
+		if !id.Initial {
+			return wire.KPasswdInitialNeeded,
+				"Your own password needs an " +
+					"initial ticket"
+		}
+		return wire.KPasswdSuccess, ""
+	}
+	if _, ok := k.AdminACL.Permits(acl.CPW, client,
+		target); !ok {
+		return wire.KPasswdAccessDenied,
+			"Not authorised to set that password"
 	}
 	return wire.KPasswdSuccess, ""
 }

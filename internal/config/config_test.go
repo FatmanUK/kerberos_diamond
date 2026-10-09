@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FatmanUK/kerberos_diamond/internal/acl"
+	"github.com/FatmanUK/kerberos_diamond/internal/store"
 )
 
 // setMinimal puts the variables that have no default into the
@@ -278,5 +281,80 @@ func TestAdminStillNeedsTheRest(t *testing.T) {
 			t.Errorf("the error does not name %s: %v",
 				name, err)
 		}
+	}
+}
+
+// KD_ADMIN_ACL is read into a usable list, and a malformed entry is a
+// configuration error rather than a privilege nobody intended.
+func TestAdminACL(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_ADMIN_ACL",
+		"admin@KDIAMOND.TEST x;*/admin@KDIAMOND.TEST i")
+
+	c, err := Load(Serve)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.AdminACL) != 2 {
+		t.Fatalf("%d entries", len(c.AdminACL))
+	}
+	if _, ok := c.AdminACL.Check(acl.DelPrinc,
+		"admin@KDIAMOND.TEST", "x@KDIAMOND.TEST"); !ok {
+		t.Error("the first entry does not permit a delete")
+	}
+	if _, ok := c.AdminACL.Check(acl.DelPrinc,
+		"a/admin@KDIAMOND.TEST", "x@KDIAMOND.TEST"); ok {
+		t.Error("an inquire entry permitted a delete")
+	}
+}
+
+// Unset permits nothing but the self-service operations, which is the
+// right default for a surface that provisions principals.
+func TestAdminACLUnsetIsNotAnError(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_ADMIN_ACL", "")
+
+	c, err := Load(Serve)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.AdminACL != nil {
+		t.Errorf("unset gave %v", c.AdminACL)
+	}
+}
+
+func TestAdminACLMalformed(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_ADMIN_ACL", "admin@KDIAMOND.TEST z")
+
+	_, err := Load(Serve)
+	if err == nil {
+		t.Fatal("a malformed KD_ADMIN_ACL was accepted")
+	}
+	if !strings.Contains(err.Error(), "KD_ADMIN_ACL") {
+		t.Errorf("the error does not name it: %v", err)
+	}
+}
+
+// An attribute restriction is read through internal/store's own
+// specifier table, which internal/acl deliberately does not import --
+// so this also checks the handover happens.
+func TestAdminACLReadsAttributeRestrictions(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_ADMIN_ACL",
+		"admin@KDIAMOND.TEST a * +requires_preauth")
+
+	c, err := Load(Serve)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	r, ok := c.AdminACL.Check(acl.AddPrinc,
+		"admin@KDIAMOND.TEST", "x@KDIAMOND.TEST")
+	if !ok || r == nil {
+		t.Fatalf("no restriction: %v %v", r, ok)
+	}
+	if r.Set != store.AttrRequiresPreAuth {
+		t.Errorf("set mask is %#x, want %#x",
+			r.Set, store.AttrRequiresPreAuth)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/FatmanUK/kerberos_diamond/internal/acl"
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
@@ -627,4 +628,129 @@ func changepwTicketForExpired(
 		t.Fatalf("the AS refused a changepw ticket: %v", kerr)
 	}
 	return rep.Ticket, decodeReply(t, k, rep).Key.KeyValue
+}
+
+// An administrator with the c privilege can now set somebody else's
+// password, which is the RFC 3244 form the access-control list
+// unblocked.
+//
+// The ticket is for kadmin/changepw like every other request to this
+// service -- upstream names that principal explicitly when reading
+// the AP-REQ (schpw.c:118-130) -- and what distinguishes an
+// administrator is the list, not the service. No initial ticket is
+// needed either: an administrator is not proving who they are to the
+// password service, they are proving they are an administrator.
+func TestSetPasswordForAnotherPrincipal(t *testing.T) {
+	k := testKDC(t)
+	k.AdminACL = testACL(t, "user@"+testRealm+" c")
+	tkt, session := adminTicketFromTGT(t, k, changepwName)
+
+	reply := k.ChangePW(setPasswordFor(t, tkt, session,
+		"preauth", "set-from-outside"))
+	code, text := changePWResult(t, reply, session)
+	if code != wire.KPasswdSuccess {
+		t.Fatalf("code %d: %s", code, text)
+	}
+	assertPrincipalPassword(t, k, "preauth",
+		"set-from-outside")
+}
+
+// Without the privilege it is refused, and the principal is left
+// alone -- which is the half that matters, because a surface that let
+// any authenticated principal re-key any other would be worse than
+// one that did not do it at all.
+func TestSetPasswordWithoutThePrivilege(t *testing.T) {
+	k := testKDC(t)
+	k.AdminACL = testACL(t, "user@"+testRealm+" i")
+	tkt, session := adminTicketFromTGT(t, k, changepwName)
+
+	reply := k.ChangePW(setPasswordFor(t, tkt, session,
+		"preauth", "should-not-take"))
+	code, _ := changePWResult(t, reply, session)
+	if code != wire.KPasswdAccessDenied {
+		t.Errorf("code %d, want ACCESSDENIED", code)
+	}
+	assertPrincipalPassword(t, k, "preauth", userPassword)
+}
+
+// And an ACL entry naming a different client does not help.
+func TestSetPasswordForSomebodyElsesEntry(t *testing.T) {
+	k := testKDC(t)
+	k.AdminACL = testACL(t, "somebody@"+testRealm+" c")
+	tkt, session := adminTicketFromTGT(t, k, changepwName)
+
+	reply := k.ChangePW(setPasswordFor(t, tkt, session,
+		"preauth", "should-not-take"))
+	code, _ := changePWResult(t, reply, session)
+	if code != wire.KPasswdAccessDenied {
+		t.Errorf("code %d, want ACCESSDENIED", code)
+	}
+}
+
+// testACL parses one, with the attribute table installed the way
+// internal/config installs it.
+func testACL(t *testing.T, spec string) acl.ACL {
+	t.Helper()
+	acl.SetAttrFunc(store.AttrMask)
+	a, err := acl.Parse(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// setPasswordFor builds an RFC 3244 frame naming a target.
+func setPasswordFor(
+	t *testing.T,
+	tkt wire.Ticket,
+	session []byte,
+	target, password string,
+) []byte {
+	t.Helper()
+	data, err := wire.MarshalChangePasswdData(
+		wire.ChangePasswdData{
+			NewPassword: []byte(password),
+			TargName: &wire.PrincipalName{
+				Type:       wire.NTPrincipal,
+				Components: []string{target},
+			},
+			TargRealm: testRealm,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return changePWRequest(t, tkt, session,
+		wire.ChangePWVersionSet, data)
+}
+
+// assertPrincipalPassword checks a principal's stored key is what the
+// password derives, which is the only thing that proves a change
+// reached the database in the form a client computes.
+func assertPrincipalPassword(
+	t *testing.T, k *KDC, name, password string,
+) {
+	t.Helper()
+	p, err := k.Store.Lookup(ctxFor(t), name+"@"+testRealm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := 0
+	row, key, err := k.Store.Key(p, &start,
+		int32(crypto.AES256CTSHMACSHA196),
+		store.AnySaltType, store.HighestKVNO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prof, err := crypto.Profile(crypto.EncType(row.EType))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := prof.StringToKey(password,
+		crypto.Salt(testRealm, []string{name}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(key) != string(want) {
+		t.Errorf("%s's key is not %q's", name, password)
+	}
 }

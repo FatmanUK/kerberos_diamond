@@ -229,6 +229,7 @@ func routes(
 		Realm:     c.Realm,
 		ClockSkew: c.ClockSkew,
 		Paths:     c.Paths,
+		AdminACL:  c.AdminACL,
 
 		Hosts:             c.Hosts,
 		HostBasedServices: c.HostBasedServices,
