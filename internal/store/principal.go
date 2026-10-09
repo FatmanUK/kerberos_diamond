@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
@@ -22,6 +23,27 @@ import (
 // which is the one thing a relational store is unambiguously better
 // at.
 func (s *Store) Lookup(
+	ctx context.Context,
+	name string,
+) (*Principal, error) {
+	canon, err := s.Canonical(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return s.LookupExact(ctx, canon)
+}
+
+// LookupExact fetches a principal by name without following an alias.
+//
+// Almost nothing wants this. Upstream resolves aliases inside
+// krb5_db_get_principal (kdb5.c:823-836), so every consumer of a
+// principal -- the AS exchange, the TGS exchange, the administrative
+// surface -- gets alias resolution without asking, and that is what
+// makes `kinit alias', `kvno alias' and `modprinc alias' all work.
+// The exceptions are the operations that act on the *name* rather
+// than on the principal behind it: creating one, renaming one, and
+// deleting an alias.
+func (s *Store) LookupExact(
 	ctx context.Context,
 	name string,
 ) (*Principal, error) {
@@ -119,8 +141,24 @@ func savePrincipal(tx *gorm.DB, p *Principal) error {
 	}).Create(p).Error
 }
 
-// Delete removes a principal and everything hanging off it.
+// Delete removes a principal and everything hanging off it, or an
+// alias and nothing else.
+//
+// Deleting an alias leaves its target alone, which is what upstream
+// does because an alias *is* a database entry there and delprinc
+// removes that entry (t_alias.py:12-16: the alias goes and `getprinc
+// canon' still works). The name is therefore not canonicalised here
+// -- doing so would make `delprinc alias' delete the principal behind
+// it, which is a considerably worse outcome than the operation
+// failing.
 func (s *Store) Delete(ctx context.Context, name string) error {
+	alias, err := s.aliasTarget(ctx, name)
+	if err != nil {
+		return err
+	}
+	if alias != "" {
+		return s.DeleteAlias(ctx, name)
+	}
 	db := s.db.WithContext(ctx)
 	for _, m := range []any{
 		&Key{}, &StringAttr{}, &TLDatum{},
@@ -133,7 +171,7 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 				name, err)
 		}
 	}
-	err := db.Where("name = ?", name).Delete(&Principal{}).Error
+	err = db.Where("name = ?", name).Delete(&Principal{}).Error
 	if err != nil {
 		return fmt.Errorf("store: delete %s: %w", name, err)
 	}
@@ -396,7 +434,20 @@ func (s *Store) List(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: list: %w", err)
 	}
-	return names, nil
+	// Alias names are listed too, which upstream gets for free
+	// because an alias is an ordinary database entry there and
+	// its iterator walks over one like any other
+	// (t_alias.py:108-109 asserts `listprincs' shows an alias).
+	// Here they are a relation of their own, so the two lists are
+	// joined -- and a dangling alias is still listed, because
+	// upstream lists the entry whether or not it resolves.
+	aliases, err := s.ListAliases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := append(names, aliases...)
+	sort.Strings(out)
+	return out, nil
 }
 
 // HighestKVNO is the greatest key version a principal holds, or 0
@@ -469,7 +520,23 @@ func (s *Store) Rename(
 	ctx context.Context,
 	from, to string,
 ) error {
-	p, err := s.Lookup(ctx, from)
+	// Neither end may be an alias, and upstream refuses both for
+	// the same reason: an alias is a name with no record of its
+	// own to move (kdb5.c:1076-1083 for the source, and
+	// t_alias.py:88-90 plus t_kadmin_acl.py:296-298 assert the
+	// target too). Its own error, because "already exists" would
+	// be misleading about what is wrong.
+	for _, name := range []string{from, to} {
+		alias, err := s.IsAlias(ctx, name)
+		if err != nil {
+			return err
+		}
+		if alias {
+			return fmt.Errorf("%w: %s",
+				ErrAliasUnsupported, name)
+		}
+	}
+	p, err := s.LookupExact(ctx, from)
 	if err != nil {
 		return err
 	}

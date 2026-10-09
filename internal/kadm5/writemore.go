@@ -18,6 +18,10 @@ func (s *Server) delPrinc(
 	if err != nil {
 		return nil, err
 	}
+	// delprinc does **not** canonicalise, and here that is more
+	// than an ACL detail: the name is also what gets deleted, and
+	// an alias deletes the alias rather than the principal behind
+	// it (t_alias.py:12-16, t_kadmin_acl.py:172-176).
 	name := c.qualify(in.Principal)
 	if _, err := c.permit(acl.DelPrinc, name); err != nil {
 		return nil, err
@@ -70,11 +74,8 @@ func (s *Server) purgeKeys(
 	if err != nil {
 		return nil, err
 	}
-	name := c.qualify(in.Principal)
-	if _, err := c.permit(acl.PurgeKeys, name); err != nil {
-		return nil, err
-	}
-	p, err := s.Store.Lookup(ctx, name)
+	p, _, err := s.canonical(ctx, c, acl.PurgeKeys,
+		in.Principal)
 	if err != nil {
 		return nil, err
 	}
@@ -86,8 +87,9 @@ func (s *Server) purgeKeys(
 		}
 	}
 	return map[string]any{
-		"removed": removed,
-		"kvno":    p.HighestKVNO(),
+		"principal": p.Name,
+		"removed":   removed,
+		"kvno":      p.HighestKVNO(),
 	}, nil
 }
 
@@ -110,14 +112,11 @@ func (s *Server) setStr(
 	if err != nil {
 		return nil, err
 	}
-	name := c.qualify(in.Principal)
-	if _, err := c.permit(acl.SetStr, name); err != nil {
-		return nil, err
-	}
 	if in.Key == "" {
 		return nil, ErrBadRequest
 	}
-	p, err := s.Store.Lookup(ctx, name)
+	p, _, err := s.canonical(ctx, c, acl.SetStr,
+		in.Principal)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +125,7 @@ func (s *Server) setStr(
 	if err := s.Store.Save(ctx, p); err != nil {
 		return nil, err
 	}
-	return map[string]any{"principal": name,
+	return map[string]any{"principal": p.Name,
 		"key": in.Key}, nil
 }
 
@@ -173,31 +172,24 @@ func (s *Server) cpw(
 	if err != nil {
 		return nil, err
 	}
-	name := c.qualify(in.Principal)
 	op := acl.CPW
 	if in.Randkey != nil && *in.Randkey {
 		op = acl.ChRand
 	}
-	if _, err := c.permit(op, name); err != nil {
+	p, _, err := s.canonical(ctx, c, op, in.Principal)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.selfOnly(name); err != nil {
-		return nil, err
-	}
-	return s.doCPW(ctx, c, name, &in)
+	return s.doCPW(ctx, c, p, &in)
 }
 
 // doCPW is the half of cpw that touches the database.
 func (s *Server) doCPW(
 	ctx context.Context,
 	c *Caller,
-	name string,
+	p *store.Principal,
 	in *PrincWrite,
 ) (any, error) {
-	p, err := s.Store.Lookup(ctx, name)
-	if err != nil {
-		return nil, err
-	}
 	if err := s.applyKeys(ctx, p, in); err != nil {
 		return nil, err
 	}
@@ -206,7 +198,7 @@ func (s *Server) doCPW(
 		return nil, err
 	}
 	return map[string]any{
-		"principal": name,
+		"principal": p.Name,
 		"kvno":      p.HighestKVNO(),
 	}, nil
 }

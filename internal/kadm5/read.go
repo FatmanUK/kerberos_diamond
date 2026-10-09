@@ -67,11 +67,8 @@ func (s *Server) getPrinc(
 	if err != nil {
 		return nil, err
 	}
-	name := c.qualify(in.Principal)
-	if _, err := c.permit(acl.GetPrinc, name); err != nil {
-		return nil, err
-	}
-	p, err := s.Store.Lookup(ctx, name)
+	p, _, err := s.canonical(ctx, c, acl.GetPrinc,
+		in.Principal)
 	if err != nil {
 		return nil, err
 	}
@@ -148,11 +145,8 @@ func (s *Server) getStrs(
 	if err != nil {
 		return nil, err
 	}
-	name := c.qualify(in.Principal)
-	if _, err := c.permit(acl.GetStrs, name); err != nil {
-		return nil, err
-	}
-	p, err := s.Store.Lookup(ctx, name)
+	p, _, err := s.canonical(ctx, c, acl.GetStrs,
+		in.Principal)
 	if err != nil {
 		return nil, err
 	}

@@ -30,6 +30,14 @@ type asState struct {
 	client *store.Principal
 	server *store.Principal
 
+	// ticketCName and ticketSName are the names the reply
+	// actually carries, which are the requested ones unless
+	// KDC_OPT_CANONICALIZE asked for the database's. They differ
+	// from cname and req.Body.SName only when an alias was named
+	// -- see canonNames.
+	ticketCName wire.PrincipalName
+	ticketSName wire.PrincipalName
+
 	// clientKey is the long-term key the reply is encrypted
 	// under, and clientEType is the enctype the *request* asked
 	// for. Those are two things: select_client_key overrides the
@@ -217,6 +225,7 @@ func (k *KDC) principals(s *asState) (int32, string) {
 	if err != nil {
 		return wire.ErrCodeGeneric, "LOOKUP_SERVER"
 	}
+	k.canonNames(s)
 	return 0, ""
 }
 

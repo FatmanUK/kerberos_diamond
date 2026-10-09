@@ -72,6 +72,9 @@ func (s *Server) addPrinc(
 	if err != nil {
 		return nil, err
 	}
+	// addprinc does **not** canonicalise: there is nothing to
+	// resolve yet, and upstream checks the requested name
+	// (t_kadmin_acl.py:155-160 asserts it).
 	name := c.qualify(in.Principal)
 	r, err := c.permit(acl.AddPrinc, name)
 	if err != nil {
@@ -104,18 +107,16 @@ func (s *Server) modPrinc(
 	if err != nil {
 		return nil, err
 	}
-	name := c.qualify(in.Principal)
-	r, err := c.permit(acl.ModPrinc, name)
+	// modprinc canonicalises: the ACL is checked against the name
+	// the request resolves to, and the write lands there too.
+	p, r, err := s.canonical(ctx, c, acl.ModPrinc,
+		in.Principal)
 	if err != nil {
 		return nil, err
 	}
 	if in.FailAuthCount != nil && *in.FailAuthCount != 0 {
 		return nil, badMask("a nonzero fail_auth_count",
 			"modprinc")
-	}
-	p, err := s.Store.Lookup(ctx, name)
-	if err != nil {
-		return nil, err
 	}
 	if err := s.apply(ctx, c, p, &in, r); err != nil {
 		return nil, err

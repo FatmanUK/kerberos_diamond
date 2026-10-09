@@ -98,6 +98,20 @@ func (s *Server) delPol(
 // policyWrite is the ACL gate for the three writing policy
 // operations.
 //
+// **The policy name is not a target**, and that is not an oversight
+// here: every one of upstream's five policy checks passes a NULL
+// target (acl_addpol, acl_modpol, acl_delpol, acl_getpol,
+// acl_listpols at auth_acl.c:678-713), so a policy's name is never
+// matched against an ACL entry's target field. The consequence runs
+// the other way from intuition: an entry that *has* a target is
+// skipped entirely for these operations, because find_entry refuses
+// to match a targeted entry against a NULL target (:460-466). So
+// `admin@REALM a somepolicy' grants addpol to nobody, where it reads
+// as granting it for one policy.
+//
+// The privileges are the same letters principals use, so `a' grants
+// addprinc and addpol alike.
+//
 // The self module does not come into it: a principal may read its own
 // policy and may not write it (auth_self.c:48-55 permits GetPol and
 // nothing else), which is the difference between knowing the rules
@@ -106,7 +120,7 @@ func (c *Caller) policyWrite(op acl.Op, policy string) error {
 	if policy == "" {
 		return ErrBadRequest
 	}
-	if _, ok := c.ACL.Check(op, c.Name(), policy); !ok {
+	if _, ok := c.ACL.Check(op, c.Name(), ""); !ok {
 		return &Refusal{Op: op, Target: policy}
 	}
 	return nil

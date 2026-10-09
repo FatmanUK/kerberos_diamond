@@ -127,6 +127,12 @@ var needs = map[Op]Privilege{
 	GetPol:     PrivInquire,
 	ListPols:   PrivList,
 	IProp:      PrivIProp,
+
+	// AddAlias needs `a' on the alias name, and its caller needs
+	// `m' on the target as well (acl_addalias,
+	// auth_acl.c:723-734). Only the first is a privilege this
+	// table can express; the second is a second check.
+	AddAlias: PrivAdd,
 }
 
 // ErrMalformed reports an entry this package cannot read.

@@ -62,6 +62,9 @@ var operations = map[string]operation{
 	"modify_policy": (*Server).modPol,
 	"delpol":        (*Server).delPol,
 	"delete_policy": (*Server).delPol,
+
+	"alias":     (*Server).addAlias,
+	"add_alias": (*Server).addAlias,
 }
 
 // named is the argument shape of every operation that acts on one

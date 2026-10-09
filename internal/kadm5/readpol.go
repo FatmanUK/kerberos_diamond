@@ -52,18 +52,24 @@ func (s *Server) getPol(
 }
 
 // permitPolicyRead is getpol's gate.
+//
+// The policy name reaches the self module and **not** the ACL: a
+// principal may read its own policy by comparing policy names
+// (SelfPolicy, auth_self.c:48-55), and the ACL check that follows
+// passes no target at all, which is what acl_getpol does
+// (auth_acl.c:701-707). See policyWrite for why that matters more
+// than it looks.
 func (s *Server) permitPolicyRead(
 	ctx context.Context,
 	c *Caller,
 	policy string,
 ) error {
 	mine, err := s.Store.Lookup(ctx, c.Name())
-	switch {
-	case err == nil &&
-		acl.SelfPolicy(acl.GetPol, policy, mine.Policy):
+	if err == nil &&
+		acl.SelfPolicy(acl.GetPol, policy, mine.Policy) {
 		return nil
 	}
-	if _, ok := c.ACL.Check(acl.GetPol, c.Name(), policy); !ok {
+	if _, ok := c.ACL.Check(acl.GetPol, c.Name(), ""); !ok {
 		return &Refusal{Op: acl.GetPol, Target: policy}
 	}
 	return nil

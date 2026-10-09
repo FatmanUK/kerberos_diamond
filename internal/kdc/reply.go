@@ -26,7 +26,7 @@ func (k *KDC) assemble(s *asState) (*wire.ASRep, error) {
 	rep := &wire.ASRep{
 		PAData: pa,
 		CRealm: k.Realm,
-		CName:  s.cname,
+		CName:  s.ticketCName,
 		Ticket: *tkt,
 	}
 	if err := k.wrapASReply(s, rep); err != nil {
@@ -117,7 +117,7 @@ func (k *KDC) ticket(s *asState) (*wire.Ticket, error) {
 	}
 	return &wire.Ticket{
 		Realm: k.Realm,
-		SName: *s.req.Body.SName,
+		SName: s.ticketSName,
 		EncPart: wire.EncryptedData{
 			EType:  int32(s.serverEType),
 			KVNO:   s.serverKVNO,
@@ -132,7 +132,7 @@ func (k *KDC) encTicketPart(s *asState) ([]byte, error) {
 		Flags:  s.flags,
 		Key:    s.session,
 		CRealm: k.Realm,
-		CName:  s.cname,
+		CName:  s.ticketCName,
 		// The transited encoding is empty but its *type* is
 		// 1, DOMAIN-X500-COMPRESS, not 0: the KDC sets it
 		// unconditionally (do_as_req.c:689). A zero there is
@@ -179,7 +179,7 @@ func (k *KDC) encPart(s *asState) (*wire.EncryptedData, error) {
 		EndTime:       unstamp(s.end),
 		RenewTill:     optStamp(s.renew),
 		SRealm:        k.Realm,
-		SName:         *s.req.Body.SName,
+		SName:         s.ticketSName,
 	})
 	if err != nil {
 		return nil, err
