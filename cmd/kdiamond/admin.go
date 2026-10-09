@@ -323,7 +323,8 @@ func cpw(args []string) error {
 	if err != nil {
 		return err
 	}
-	kvno, err := changePassword(ctx, s, p, *pw, *keepOld)
+	kvno, err := s.ChangePassword(ctx, p, *pw,
+		*keepOld)
 	if err != nil {
 		return err
 	}
@@ -333,57 +334,6 @@ func cpw(args []string) error {
 	fmt.Printf("Password for %q changed, now key version %d.\n",
 		name, kvno)
 	return nil
-}
-
-// changePassword does the work, and the policy's quality rules apply
-// to an administrator's change as much as to a user's own: upstream
-// calls passwd_check from chpass_principal_3, which both paths go
-// through (svr_principal.c:1281).
-//
-// What does *not* apply is the minimum password life. An
-// administrator with the authority to change a password has the
-// authority to change it now, which is why upstream reaches
-// check_min_life only from the self-service branch
-// (kadmin/server/misc.c:24-32).
-func changePassword(
-	ctx context.Context,
-	s *store.Store,
-	p *store.Principal,
-	pw string,
-	keepOld bool,
-) (int32, error) {
-	if err := s.CheckPassword(ctx, p, pw); err != nil {
-		return 0, err
-	}
-	if err := s.CheckPasswordReuse(ctx, p, pw); err != nil {
-		return 0, err
-	}
-	// The history entry is built from the keys that are about to
-	// be replaced, so it has to be written first -- which is the
-	// one ordering constraint here and the one upstream puts a
-	// comment on (svr_principal.c:1270-1271).
-	if err := s.RecordPasswordHistory(ctx, p); err != nil {
-		return 0, err
-	}
-	kvno := p.HighestKVNO() + 1
-	mkey := s.MasterKey()
-	var err error
-	if keepOld {
-		err = p.SetPasswordKeepOld(mkey, pw, kvno)
-	} else {
-		err = p.SetPassword(mkey, pw, kvno)
-	}
-	if err != nil {
-		return 0, err
-	}
-	if err := s.SetPasswordExpiry(ctx, p,
-		time.Now()); err != nil {
-		return 0, err
-	}
-	// And the bit that demanded a change is cleared, as it is on
-	// a self-service change (svr_principal.c:1298).
-	p.Attributes &^= store.AttrRequiresPWChange
-	return kvno, nil
 }
 
 // delprinc removes a principal.

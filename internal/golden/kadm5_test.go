@@ -13,6 +13,7 @@ import (
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/kadm5"
 	"github.com/FatmanUK/kerberos_diamond/internal/spnego"
+	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
 
@@ -154,6 +155,13 @@ func kadm5Server(
 	aclSpec string,
 ) *httptest.Server {
 	t.Helper()
+	// The attribute table has to be installed before an ACL with
+	// restrictions will parse, which internal/config does for the
+	// real process (parseTables) and which a test standing the
+	// surface up directly has to do for itself. acl depends on
+	// nothing, so the table reaches it as a function rather than
+	// an import.
+	acl.SetAttrFunc(store.AttrMask)
 	a, err := acl.Parse(aclSpec)
 	if err != nil {
 		t.Fatalf("the ACL %q: %v", aclSpec, err)

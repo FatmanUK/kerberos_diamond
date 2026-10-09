@@ -37,6 +37,31 @@ var operations = map[string]operation{
 	"get_policies":   (*Server).listPols,
 	"getprivs":       (*Server).getPrivs,
 	"get_privs":      (*Server).getPrivs,
+
+	"addprinc":         (*Server).addPrinc,
+	"ank":              (*Server).addPrinc,
+	"add_principal":    (*Server).addPrinc,
+	"modprinc":         (*Server).modPrinc,
+	"modify_principal": (*Server).modPrinc,
+	"delprinc":         (*Server).delPrinc,
+	"delete_principal": (*Server).delPrinc,
+	"renprinc":         (*Server).renPrinc,
+	"rename_principal": (*Server).renPrinc,
+	"cpw":              (*Server).cpw,
+	"change_password":  (*Server).cpw,
+	"purgekeys":        (*Server).purgeKeys,
+	"purge_keys":       (*Server).purgeKeys,
+	"setstr":           (*Server).setStr,
+	"set_string":       (*Server).setStr,
+	"delstr":           (*Server).setStr,
+	"del_string":       (*Server).setStr,
+
+	"addpol":        (*Server).addPol,
+	"add_policy":    (*Server).addPol,
+	"modpol":        (*Server).modPol,
+	"modify_policy": (*Server).modPol,
+	"delpol":        (*Server).delPol,
+	"delete_policy": (*Server).delPol,
 }
 
 // named is the argument shape of every operation that acts on one
