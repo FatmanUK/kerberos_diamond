@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"time"
@@ -169,6 +170,75 @@ func (p *Principal) SetPassword(
 	}
 	p.LastPWChange = time.Now().UTC().Truncate(time.Second)
 	return nil
+}
+
+// SetRandomKey writes a random key for each supported enctype at one
+// key version, the way kadmin's addprinc -randkey and ktadd do.
+//
+// A service's key is never typed by anyone, so deriving it from a
+// password only weakens it to whatever the password was worth. The
+// salt does not come into it either: a random key has none, and
+// upstream records that as SaltNormal with nothing stored, exactly as
+// a default salt is recorded -- because nothing ever recomputes a
+// salt for a key no string-to-key produced.
+//
+// Note what upstream does *not* do here. randkey_3 runs neither the
+// password-quality check nor the history check
+// (svr_principal.c:1388-1505), which is why `cpw -randkey` escapes a
+// minimum password lifetime and a reuse rule. That is behaviour to
+// reproduce rather than improve: the rules exist to constrain what a
+// human chooses, and nothing here was chosen.
+func (p *Principal) SetRandomKey(
+	mkey MasterKey,
+	kvno int32,
+) error {
+	p.Keys = nil
+	for i, e := range crypto.Supported() {
+		k, err := randomKey(mkey, e)
+		if err != nil {
+			return err
+		}
+		k.PrincipalName = p.Name
+		k.KeyIndex = int32(i)
+		k.KVNO = kvno
+		p.Keys = append(p.Keys, k)
+	}
+	p.LastPWChange = time.Now().UTC().Truncate(time.Second)
+	return nil
+}
+
+// randomKey makes and seals one random key.
+//
+// For every enctype this project implements, random-to-key is the
+// identity: RFC 3962 says so for the AES pair (section 6, "the
+// random-to-key function is the identity function") and RFC 8009
+// repeats it for aes-sha2 (section 5). The enctypes where it is not
+// -- the DES family's parity fixing, and 3DES -- are the ones this
+// project does not have, so the indirection upstream keeps for
+// krb5_c_random_to_key would have exactly one implementation here and
+// is left out. It goes back in the day another family does.
+func randomKey(
+	mkey MasterKey,
+	e crypto.EncType,
+) (Key, error) {
+	prof, err := crypto.Profile(e)
+	if err != nil {
+		return Key{}, err
+	}
+	key := make([]byte, prof.KeyLength)
+	if _, err := rand.Read(key); err != nil {
+		return Key{}, err
+	}
+	blob, err := encodeKeyBlob(mkey.Key, mkey.EType, key)
+	if err != nil {
+		return Key{}, err
+	}
+	return Key{
+		EType:    int32(e),
+		Blob:     blob,
+		SaltType: SaltNormal,
+		MKVNO:    mkey.KVNO,
+	}, nil
 }
 
 // newKey derives and seals one key.

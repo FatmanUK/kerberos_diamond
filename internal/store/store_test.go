@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -483,4 +484,126 @@ func store2Principal(
 		t.Fatal(err)
 	}
 	return p
+}
+
+// A random key is random, is the right length for its enctype, and is
+// nothing a password would have produced.
+//
+// The last part is the one worth asserting: a service's key is never
+// typed by anyone, so deriving it from a password only weakens it to
+// whatever the password was worth, and a SetRandomKey that quietly
+// fell back to string-to-key would be invisible from every other
+// angle.
+func TestSetRandomKeyIsNotDerivedFromAnything(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	name := "host/a.test@" + testRealm
+	principal(t, s, name, "servicepassword")
+
+	p, err := s.Lookup(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetRandomKey(s.MasterKey(), 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.Lookup(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRandomKeys(t, s, again, "servicepassword")
+}
+
+// assertRandomKeys walks every key a principal holds and checks each
+// one: the version is the new one, the length is the enctype's, and
+// the bytes are not what the password would have given.
+func assertRandomKeys(
+	t *testing.T,
+	s *Store,
+	p *Principal,
+	password string,
+) {
+	t.Helper()
+	components, realm, err := ParseName(p.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	salt := crypto.Salt(realm, components)
+	seen := 0
+	start := 0
+	for {
+		row, key, err := s.Key(p, &start, AnyEType,
+			AnySaltType, HighestKVNO)
+		if errors.Is(err, ErrNoMatchingKey) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Key: %v", err)
+		}
+		seen++
+		assertRandomKey(t, row, key, password, salt)
+	}
+	if seen != len(crypto.Supported()) {
+		t.Errorf("%d keys, want one per supported enctype "+
+			"(%d)", seen, len(crypto.Supported()))
+	}
+}
+
+// assertRandomKey checks one of them.
+func assertRandomKey(
+	t *testing.T,
+	row *Key,
+	key []byte,
+	password string,
+	salt []byte,
+) {
+	t.Helper()
+	prof, err := crypto.Profile(crypto.EncType(row.EType))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.KVNO != 2 {
+		t.Errorf("enctype %d is at kvno %d, want 2",
+			row.EType, row.KVNO)
+	}
+	if len(key) != prof.KeyLength {
+		t.Errorf("enctype %d key is %d bytes not %d",
+			row.EType, len(key), prof.KeyLength)
+	}
+	derived, err := prof.StringToKey(password, salt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprintf("%X", key) == fmt.Sprintf("%X", derived) {
+		t.Errorf("enctype %d got the password's key",
+			row.EType)
+	}
+}
+
+// Two calls give two different keys, which is what makes ktadd's
+// re-key mean anything: handing out a keytab without changing the key
+// would leave every previous copy working.
+func TestSetRandomKeyDiffersEveryTime(t *testing.T) {
+	s, _ := testStore(t)
+	mkey := s.MasterKey()
+	first := NewPrincipal(testRealm, []string{"a"})
+	second := NewPrincipal(testRealm, []string{"a"})
+	if err := first.SetRandomKey(mkey, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.SetRandomKey(mkey, 1); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Keys) == 0 {
+		t.Fatal("no keys")
+	}
+	for i := range first.Keys {
+		if fmt.Sprintf("%X", first.Keys[i].Blob) ==
+			fmt.Sprintf("%X", second.Keys[i].Blob) {
+			t.Errorf("key %d repeated", i)
+		}
+	}
 }

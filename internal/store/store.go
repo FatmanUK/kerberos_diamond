@@ -71,10 +71,10 @@ func Open(url string, mkey MasterKey) (*Store, error) {
 // and exhaust it for each other.
 //
 // The suite found this before a deployment could. `go test ./...`
-// runs packages in parallel, and with no cap the two
-// database-backed packages together passed Postgres' default
-// hundred-client limit and failed with "sorry, too many clients
-// already" -- intermittently, which is the worst way to find out.
+// runs packages in parallel, and with no cap the two database-backed
+// packages together passed Postgres' default hundred-client limit and
+// failed with "sorry, too many clients already" -- intermittently,
+// which is the worst way to find out.
 const (
 	maxOpenConns = 8
 	maxIdleConns = 2

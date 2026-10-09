@@ -46,6 +46,13 @@ principal administration, standing in for kadmin:
   kdiamond delprinc PRINC         remove a principal
   kdiamond getprinc PRINC         print what the KDC knows
   kdiamond listprincs             print every principal's name
+  kdiamond ktadd -k FILE [-norandkey] PRINC
+                                  write keys into a keytab
+
+ktadd re-keys the principal unless -norandkey is given, because a
+keytab is a copy of a secret and handing one out without changing the
+key would leave every previous copy working. That is kadmin's
+behaviour too.
 
 An attribute SPEC is kadmin's, sign included: +requires_preauth,
 -allow_tix, +forwardable and so on. Most are inverted -- +forwardable
@@ -86,6 +93,8 @@ func run(args []string) error {
 		return getprinc(rest[1:])
 	case "listprincs":
 		return listprincs(rest[1:])
+	case "ktadd", "xst":
+		return ktadd(rest[1:])
 	case "":
 		usage()
 		return errors.New("no subcommand given")
