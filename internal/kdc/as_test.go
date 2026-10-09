@@ -126,6 +126,16 @@ func rawDB(t *testing.T, u string) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	// One connection creates and drops a schema, and `go test
+	// ./...` runs enough packages at once that an unbounded pool
+	// here was part of what exhausted Postgres' client limit.
+	sql, err := db.DB()
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	sql.SetMaxOpenConns(2)
+	sql.SetMaxIdleConns(1)
+	t.Cleanup(func() { sql.Close() })
 	return db
 }
 

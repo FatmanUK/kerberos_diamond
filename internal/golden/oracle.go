@@ -130,6 +130,12 @@ const (
 	// published onto this one.
 	OraclePort = 8088
 
+	// ChangePWPassword is the key of kadmin/changepw, the
+	// principal a password change authenticates to. Only the Go
+	// side needs it: the C realm's own copy is created with a
+	// random key by kdb5_util and nothing compares the two.
+	ChangePWPassword = "changepwpassword"
+
 	// PreauthName demands pre-authentication; UserName does not.
 	// Keeping both means the padata-free single round trip and
 	// the PA-ENC-TIMESTAMP path can be exercised separately.
@@ -143,6 +149,12 @@ var ServiceName = []string{"host", "service.kdiamond.test"}
 // ReferralService is the host-based service that exists only in the
 // foreign realm, in a domain this realm's KDC maps there.
 var ReferralService = []string{"host", "www." + ReferralDomain}
+
+// ChangePWName is the password-change service's components. A stock
+// kpasswd gets an initial ticket for it with the user's current
+// password and then presents it, which is why the principal has to
+// exist before any of that works.
+var ChangePWName = []string{"kadmin", "changepw"}
 
 // Oracle is a running C KDC.
 type Oracle struct {

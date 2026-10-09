@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -52,11 +53,48 @@ func Open(url string, mkey MasterKey) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open: %w", err)
 	}
+	if err := limitPool(db); err != nil {
+		return nil, err
+	}
 	s := &Store{db: db, mkey: mkey}
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// Pool bounds. A KDC's queries are short and one per request, so a
+// small pool is enough, and an unbounded one is actively wrong here
+// for a reason the crash-only design makes sharper: several KDCs
+// share one database, and a herd of them restarting at once would
+// otherwise open as many connections as they had requests in flight
+// and exhaust it for each other.
+//
+// The suite found this before a deployment could. `go test ./...`
+// runs packages in parallel, and with no cap the two
+// database-backed packages together passed Postgres' default
+// hundred-client limit and failed with "sorry, too many clients
+// already" -- intermittently, which is the worst way to find out.
+const (
+	maxOpenConns = 8
+	maxIdleConns = 2
+	connLifetime = 30 * time.Minute
+)
+
+// limitPool bounds the connection pool.
+func limitPool(db *gorm.DB) error {
+	sql, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("store: pool: %w", err)
+	}
+	sql.SetMaxOpenConns(maxOpenConns)
+	sql.SetMaxIdleConns(maxIdleConns)
+	// A lifetime bound is what lets a connection follow the
+	// database rather than the process: a failover moves the
+	// primary and an idle connection pinned to the old one would
+	// keep answering until something used it.
+	sql.SetConnMaxLifetime(connLifetime)
+	return nil
 }
 
 // migrate creates or updates the tables.

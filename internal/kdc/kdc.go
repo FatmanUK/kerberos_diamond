@@ -107,10 +107,36 @@ func (k *KDC) Handle(msg []byte) ([]byte, error) {
 	// -- they are otherwise the same structure -- so the dispatch
 	// is on which decoder accepts the message, not on anything
 	// inside it.
-	if len(msg) > 0 && msg[0] == appTagByte(wire.MsgTGSReq) {
-		return k.handleTGS(msg)
+	//
+	// A password change is a third thing and is not ASN.1 at all:
+	// it begins with its own length as a big-endian uint16, so
+	// its first octet is the high half of a length under 65536
+	// and cannot be an application tag. Upstream keeps the two on
+	// separate ports and so never has to tell them apart; here
+	// they share one, because the transport is HTTPS and a second
+	// port would be a second thing to secure.
+	if len(msg) > 0 && isAppTag(msg[0]) {
+		if msg[0] == appTagByte(wire.MsgTGSReq) {
+			return k.handleTGS(msg)
+		}
+		return k.handleAS(msg)
 	}
-	return k.handleAS(msg)
+	return k.handleChangePW(msg)
+}
+
+// isAppTag reports whether an identifier octet opens a constructed
+// [APPLICATION n] wrapper, which every Kerberos message does and a
+// password-change frame does not.
+func isAppTag(b byte) bool { return b&0xE0 == 0x60 }
+
+// handleChangePW answers a password-change frame. It cannot fail:
+// every refusal is a reply the client reads a result code out of, and
+// one that got nothing would retry.
+func (k *KDC) handleChangePW(msg []byte) ([]byte, error) {
+	if out := k.ChangePW(msg); out != nil {
+		return out, nil
+	}
+	return nil, ErrNotARequest
 }
 
 // appTagByte is the identifier octet of a constructed [APPLICATION n]

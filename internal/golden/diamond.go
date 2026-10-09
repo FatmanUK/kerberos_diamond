@@ -19,9 +19,23 @@ import (
 // openAdmin connects outside any scratch schema, to create and drop
 // them.
 func openAdmin(url string) (*gorm.DB, error) {
-	return gorm.Open(postgres.Open(url), &gorm.Config{
+	db, err := gorm.Open(postgres.Open(url), &gorm.Config{
 		Logger: logger.Discard,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// One connection is enough for a CREATE and a DROP, and the
+	// suite runs enough of these in parallel that an unbounded
+	// pool here was half of what exhausted Postgres' client
+	// limit.
+	sql, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	sql.SetMaxOpenConns(2)
+	sql.SetMaxIdleConns(1)
+	return db, nil
 }
 
 // Diamond is this project's KDC, set up to answer the same realm the
@@ -145,6 +159,14 @@ func provision(
 		{ServiceName, ServicePassword, 1, 0},
 		{[]string{PeerName}, PeerPassword, 1,
 			store.AttrDisallowSvr},
+		// PWCHANGE_SERVICE is what exempts a principal whose
+		// password has expired from needing a valid one to
+		// get a ticket here -- without it there would be no
+		// way to change an expired password, which is the
+		// condition the whole service exists for. kdb5_util
+		// create sets it on this principal and so does this.
+		{ChangePWName, ChangePWPassword, 1,
+			store.AttrPWChangeService},
 	} {
 		p := store.NewPrincipal(Realm, e.components)
 		p.Attributes = e.attrs

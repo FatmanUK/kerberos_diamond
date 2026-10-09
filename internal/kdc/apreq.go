@@ -1,6 +1,8 @@
 package kdc
 
 import (
+	"time"
+
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
@@ -55,6 +57,32 @@ type Identity struct {
 	// listener to see it on.
 	SubKey *wire.EncryptionKey
 	Seq    uint32
+
+	// CTime and CUsec are the authenticator's own clock, which a
+	// reply has to echo back exactly: that echo *is* mutual
+	// authentication, and krb5_rd_rep answers KRB5_MUTUAL_FAILED
+	// if either differs (rd_rep.c:106-110). The server's own
+	// clock does not come into it.
+	CTime time.Time
+	CUsec int32
+
+	// Session is the ticket's session key, which a caller that
+	// replies cannot do without: an AP-REP and a KRB-PRIV are
+	// both sealed with it, or with SubKey when the client sent
+	// one. Upstream's equivalent is the auth context, which holds
+	// both and picks between them per direction (krb5_rd_priv
+	// uses recv_subkey when it is set).
+	Session wire.EncryptionKey
+}
+
+// ReplyKey is the key a reply to this AP-REQ is sealed with: the
+// authenticator's subkey when it sent one, and the ticket's session
+// key otherwise.
+func (i *Identity) ReplyKey() wire.EncryptionKey {
+	if i.SubKey != nil {
+		return *i.SubKey
+	}
+	return i.Session
 }
 
 // Name is the client fully qualified, which is the form an access
@@ -123,6 +151,9 @@ func (k *KDC) acceptAPReq(
 		Initial: tkt.Flags.Has(wire.FlagInitial),
 		SubKey:  a.SubKey,
 		Seq:     a.SeqNumber,
+		CTime:   a.CTime,
+		CUsec:   a.CUsec,
+		Session: tkt.Key,
 	}, 0, ""
 }
 
