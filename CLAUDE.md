@@ -74,6 +74,12 @@ harness's own request did not provoke it. `BOOTSTRAP.md` §6 lists them.
 `make golden` needs Podman and a Postgres; it is deliberately not part of
 `make check` or CI, because the C build takes minutes.
 
+`make golden-build-tls` builds a **second image, which is not an oracle**:
+Kerberos 5 with the OpenSSL TLS module, for the two cases that need a
+client able to speak HTTPS. Nothing is ever compared against it, and
+`BOOTSTRAP.md` §3.3 records the narrowing of the no-OpenSSL rule that
+allows it. The cases skip if it is absent.
+
 Two things about the diff, both from the C, both load-bearing:
 
 - **Byte-exact comparison cannot work.** Every `krb5_c_encrypt` prepends a

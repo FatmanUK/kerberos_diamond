@@ -333,6 +333,12 @@ run: build certs db-up ## Run the KDC on the host
 ORACLE_IMAGE ?= localhost/krb5-oracle
 ORACLE_SRC   ?= kerberos
 
+# A *second* image, built with the OpenSSL TLS module, used by one
+# test and nothing else. The name says what it is: it is not the
+# oracle and nothing is compared against it. BOOTSTRAP.md section 3.3
+# and deploy/golden/Containerfile.krb5-tls both say why.
+TLS_CLIENT_IMAGE ?= localhost/krb5-tls-client
+
 .PHONY: golden-build
 golden-build: $(ORACLE_SRC)/src ## Build the C Kerberos 5 to compare against
 	@echo "staging $(ORACLE_SRC)..."
@@ -343,6 +349,17 @@ golden-build: $(ORACLE_SRC)/src ## Build the C Kerberos 5 to compare against
 	podman build -t $(ORACLE_IMAGE) \
 		-f build/oracle/Containerfile.krb5 build/oracle
 	@rm -rf build/oracle
+
+.PHONY: golden-build-tls
+golden-build-tls: $(ORACLE_SRC)/src ## Build the TLS-capable test client
+	@echo "staging $(ORACLE_SRC) for the TLS client..."
+	@rm -rf build/tlsclient && mkdir -p build/tlsclient
+	@git -C $(ORACLE_SRC) archive HEAD | tar -x -C build/tlsclient
+	@cp deploy/golden/Containerfile.krb5-tls build/tlsclient/
+	podman build -t $(TLS_CLIENT_IMAGE) \
+		-f build/tlsclient/Containerfile.krb5-tls \
+		build/tlsclient
+	@rm -rf build/tlsclient
 
 # The upstream C is a submodule; the oracle is the only thing that
 # builds it.

@@ -1,0 +1,104 @@
+# Builds Kerberos 5 **with the OpenSSL TLS module**, for one test and
+# nothing else.
+#
+# ----------------------------------------------------------------
+# THIS IMAGE IS NOT THE ORACLE. It is a client-side test fixture.
+# ----------------------------------------------------------------
+#
+# BOOTSTRAP.md §3.3 says this project does not link OpenSSL, and that
+# rule is **product-scoped**: it applies to everything the project
+# ships and to every other test. Here is why the narrowing is honest
+# rather than convenient.
+#
+# The rule's own justification was that "upstream's k5tls plugin is
+# the only part of Kerberos 5 that wants it" -- which is an argument
+# about what a *KDC* needs, and this project's KDC needs none of it.
+# k5tls is a **client** plugin: it is what lets an unmodified
+# Kerberos 5 client reach an `https://' KDC with no shim in front of
+# it. Applying a rule about the product to a fixture that tests
+# whether other people's clients can reach the product was a stricter
+# reading than the argument supported, and it had a cost: §6 had to
+# admit that the TLS leg was exercised by kdiamond-proxy and not by
+# any client.
+#
+# So: the ordinary oracle (Containerfile.krb5) stays OpenSSL-free and
+# every differential case keeps running against it. This image exists
+# for the single case that proves a stock client negotiates the TLS
+# itself, and the image name says so.
+#
+# A diagnostic trap worth knowing, and the reason this image is
+# necessary rather than merely nice: with --with-tls-impl=no the
+# module still **loads successfully**. notls.c:40-51 compiles the
+# init symbol and leaves the vtable nulled, so the load-error trace
+# line never fires; setup == NULL then makes setup_tls return false
+# and service_https_write kills the connection
+# (sendto_kdc.c:1266-1269) **with no trace output at all**. A client
+# from the ordinary oracle pointed at an https:// KDC does not report
+# a missing TLS module -- it reports "cannot contact any KDC". Nobody
+# would diagnose that from the outside.
+
+FROM docker.io/library/debian:12-slim AS build
+
+# libssl-dev is the difference from the ordinary oracle. Everything
+# else in this stage is identical, deliberately: the only variable
+# under test is the TLS module.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential autoconf m4 bison perl python3 \
+        ca-certificates libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+WORKDIR /src/src
+
+RUN autoconf -f --include=. && autoheader --include=.
+
+# --with-tls-impl=openssl, and that is the whole point of this file.
+#
+# configure.ac:290-331 accepts literally `openssl', `auto' or `no'
+# and errors on anything else (:320-322); no other backend has ever
+# existed upstream, and k5-tls.h says of its own interface that it is
+# "currently tailored for the needs of the OpenSSL module ... can be
+# changed without regard for backward compatibility" (:33-39). So
+# this is not one choice among several -- it is the only way to get a
+# Kerberos 5 client that speaks HTTPS.
+#
+# Only the *backend* is gated by the flag. The shared object is built
+# either way, which is why --with-tls-impl=no still produces a
+# loadable module and why the trap described above exists.
+#
+# PKINIT stays disabled. OpenSSL is present now and configure would
+# happily build it, but PKINIT is a declared non-goal and building it
+# here would mean this fixture exercised a code path the project has
+# no intention of implementing.
+RUN ./configure \
+        --prefix=/opt/krb5 \
+        --with-tls-impl=openssl \
+        --disable-pkinit \
+        --disable-nls \
+        --disable-rpath \
+    && make -j"$(nproc)" \
+    && make install
+
+FROM docker.io/library/debian:12-slim
+
+# Unlike the ordinary oracle, this stage *does* install a package:
+# libssl3, which k5tls.so is linked against and cannot run without.
+# It is the one line that separates the two images at runtime.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /opt/krb5 /opt/krb5
+ENV PATH=/opt/krb5/sbin:/opt/krb5/bin:$PATH \
+    LD_LIBRARY_PATH=/opt/krb5/lib
+
+# No realm-setup and no entrypoint of its own. This image is a
+# *client*: it never serves a realm, and the one test that uses it
+# writes the client configuration in and runs kinit. Giving it a KDC
+# to run would invite somebody to compare against it, which is
+# exactly what it must not be used for.
+ENV TZ=UTC \
+    LC_ALL=C
+ENTRYPOINT ["sleep", "infinity"]

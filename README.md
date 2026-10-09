@@ -217,13 +217,23 @@ set. Tests that need a database skip rather than fail when there is none, so
 ### The differential harness
 
 ```bash
-make golden-build  # builds Kerberos 5 from the submodule in a container
-make golden        # drives both implementations and diffs
+make golden-build      # builds Kerberos 5 from the submodule in a container
+make golden-build-tls  # a second image, with a TLS-capable client
+make golden            # drives both implementations and diffs
 ```
 
-`golden-build` compiles the C and takes minutes, so neither target is part
+`golden-build` compiles the C and takes minutes, so none of these is part
 of `make check` or CI. The oracle serves four realms from one `krb5kdc`, so
 cross-realm and three-realm paths can be driven without a second container.
+
+`golden-build-tls` builds a **second image and it is not an oracle**:
+Kerberos 5 with the OpenSSL TLS module, serving no realm, used by one test
+and never compared against. It is what lets a stock `kinit` reach this
+KDC's HTTPS listener with no `kdiamond-proxy` in front of it. Two cases
+need it and the second is the interesting one — a client *without* the
+module, given the same configuration, reports "Cannot contact any KDC" and
+never mentions TLS at all. Without that image the project could not tell
+the two apart. The cases skip if it is not built.
 
 Three things about the comparison are worth knowing before reading it,
 because each is load-bearing and each is a conclusion rather than a choice:

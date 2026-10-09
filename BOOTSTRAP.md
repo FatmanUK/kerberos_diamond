@@ -169,11 +169,26 @@ Everything the plan file listed is done, so this list is now the live one.
    a domain this realm maps elsewhere, the client is handed a
    cross-realm TGT, follows it, and comes back with a ticket for a
    realm it was never configured to know about.
-5. **A `kadmin` protocol**, for provisioning from off-host. The `kdiamond`
-   subcommands need a shell on the KDC's machine; something external
-   eventually will not have one.
-6. **A client built with a TLS module**, so the HTTPS leg is covered end to
-   end without `kdiamond-proxy` in the way.
+5. ~~**A `kadmin` protocol**, for provisioning from off-host.~~ Done, and
+   not as a port of kadmin's: `POST /kadm5/<verb>` on the port the KDC
+   already listens on, authenticated per request with SPNEGO (RFC 4559)
+   and carrying JSON. **Stock `kadmin` will not work against this KDC**
+   and never will — it speaks Sun RPC under RPCSEC_GSS on port 749, and
+   porting that would break the TLS-only invariant. What softens it is
+   that provisioning was never the whole of administration: users change
+   passwords with a stock `kpasswd`, services get keys from a keytab a
+   stock `kinit -k` reads, and only operators need this surface.
+   Upstream's own argument for `kadmin` existing is that a flat-file
+   database can only be edited on its own host; that survives for
+   provisioning and never covered the other two. Anchored by upstream's
+   `gss-client` for the acceptor and by a stock `kinit` logging in with a
+   password set through the surface. Still absent: `ktadd` over the wire,
+   and the remote half of `kdiamond` itself, which needs a Kerberos
+   *client* and so waits on item 6's work.
+6. ~~**A client built with a TLS module**, so the HTTPS leg is covered end
+   to end without `kdiamond-proxy` in the way.~~ Done, with a second,
+   clearly-labelled image — see §3.3's narrowing of the no-OpenSSL rule
+   and §6.
 7. **The Windows PAC**, last but one.
 8. **S4U2Self and S4U2Proxy**, last.
 
@@ -247,12 +262,54 @@ are not "fixed" back by accident.
   (`lib/krb5/os/sendto_kdc.c:604`, `lib/krb5/os/locate_kdc.c:217`), so "TLS
   only" costs no client compatibility: a realm stanza naming
   `kdc = https://host:port/path` is all a capable client needs.
-- **No OpenSSL anywhere, including in the C oracle.** Upstream's `k5tls`
-  plugin is the only part of Kerberos 5 that wants it — core crypto defaults
-  to `CRYPTO_IMPL=builtin` (`src/configure.ac:266-273`) — so the oracle is
-  built `--with-tls-impl=no`. `configure.ac:290-331` accepts only `openssl`,
-  `auto` or `no`, and `auto` links libssl if it happens to be installed, so
-  the flag is passed explicitly.
+- **No OpenSSL in anything this project ships, and none in the oracle.**
+  Upstream's `k5tls` plugin is the only part of Kerberos 5 that wants it —
+  core crypto defaults to `CRYPTO_IMPL=builtin` (`src/configure.ac:266-273`)
+  — so the oracle is built `--with-tls-impl=no`. `configure.ac:290-331`
+  accepts only `openssl`, `auto` or `no`, and `auto` links libssl if it
+  happens to be installed, so the flag is passed explicitly.
+
+  **This rule was originally written as "no OpenSSL anywhere", and it has
+  been narrowed, deliberately and with its reasoning.** The justification
+  above is an argument about what a *KDC* needs: `k5tls` is a **client**
+  plugin, and what it does is let an unmodified Kerberos 5 client reach an
+  `https://` KDC with no shim in front of it. Applying a rule about the
+  product to a fixture that tests whether other people's clients can reach
+  the product was a stricter reading than the argument supported, and it had
+  a cost — §6 had to admit that the TLS leg was exercised by
+  `kdiamond-proxy` and by no client at all.
+
+  So there is now a **second, clearly-labelled image**,
+  `localhost/krb5-tls-client` from `deploy/golden/Containerfile.krb5-tls`,
+  built `--with-tls-impl=openssl` and used by exactly one test. It is not
+  the oracle: it serves no realm, has no `realm-setup`, and nothing is ever
+  compared against it. Everything this project ships stays OpenSSL-free and
+  so does every other test.
+
+  A diagnostic trap is why the second image is necessary rather than merely
+  convenient, and it is now evidenced rather than predicted. With
+  `--with-tls-impl=no` the module still **loads successfully** —
+  `notls.c:40-51` compiles the init symbol and leaves the vtable nulled —
+  so the load-error trace line never fires; `setup == NULL` then makes
+  `setup_tls` return false and `service_https_write` kills the connection
+  (`sendto_kdc.c:1266-1269`) **with no trace output at all**. The ordinary
+  oracle's client, given the identical configuration, traces exactly this
+  and nothing else:
+
+  ```
+  Resolving hostname host.containers.internal
+  Terminating TCP connection to https 169.254.1.2:36893
+  kinit: Cannot contact any KDC for realm 'KDIAMOND.TEST'
+  ```
+
+  The string `TLS` appears nowhere in it. So a client that cannot do HTTPS
+  is indistinguishable from a KDC that is not there, and **the only place
+  the difference is visible is the server's log**, which sees the
+  connection opened and closed with no handshake. That is worth knowing
+  before anyone debugs it, and it is a test
+  (`TestAClientWithNoTLSModuleFailsSilently`) rather than a note, because
+  it is also the control proving the positive case is not passing for an
+  unrelated reason.
 - **`cmd/kdiamond-proxy` carries TLS for clients that cannot.** A client
   built without a TLS module — the oracle's, for one — reaches the KDC
   through this shim: plain Kerberos TCP on loopback in, KKDCP over HTTPS
@@ -777,11 +834,18 @@ tests. It is green.
   a non-zero exit alone would also be what a client that could not reach the
   KDC produced. Each case reads the client's own trace to confirm it dialled
   the shim and not the C KDC sharing its container.
-- **What the end-to-end check does not cover.** The client-to-shim hop is
-  cleartext, so the TLS leg is exercised by `kdiamond-proxy` and not by the
-  client. A client built *with* a TLS module reaches the KDC's HTTPS listener
-  directly; until one is available, that half is covered only by
-  `internal/transport`'s own tests, which do use real TLS.
+- **A client that negotiates the TLS itself, with no shim.** Most
+  end-to-end cases go through `kdiamond-proxy`, which is the right topology
+  for a client built without a TLS module — but it means the client-to-shim
+  hop is cleartext and the TLS leg is the shim's work rather than the
+  client's. One case closes that gap: a stock `kinit` from the
+  TLS-capable image dials the Go KDC's own HTTPS listener with
+  `kdc = https://host:port/path` and `http_anchors = FILE:…`, verifies the
+  certificate against that anchor, and runs an AS exchange over it with no
+  shim running anywhere. The assertion is the client's own trace naming the
+  `https` hop, so it is the client reporting what it did rather than this
+  project inferring it from a ticket appearing. See §3.3 for why a second
+  image exists and what it is not.
 - **The TGS exchange** — covered in process *and* differentially. The
   service ticket is opened
   with the service's own key and compared against the reply the client can
