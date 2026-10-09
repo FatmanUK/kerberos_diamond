@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/config"
+	"github.com/FatmanUK/kerberos_diamond/internal/kadm5"
 	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/transport"
@@ -209,6 +210,7 @@ func listen(c *config.Config, s *store.Store) error {
 	}()
 	log.Info("kdiamond listening", "addr", c.ListenAddr,
 		"realm", c.Realm, "path", c.ProxyPath,
+		"admin", kadm5.Prefix,
 		"master-kdf", string(s.MasterKey().KDF))
 	err := srv.ListenAndServeTLS(c.TLSCertFile, c.TLSKeyFile)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -217,8 +219,14 @@ func listen(c *config.Config, s *store.Store) error {
 	return err
 }
 
-// routes are the two the KDC serves: the readiness probe a load
-// balancer needs, and everything else to the KKDCP handler.
+// routes are the three the KDC serves: the readiness probe a load
+// balancer needs, the administrative surface, and everything else to
+// the KKDCP handler.
+//
+// /kadm5/ goes first because "/" catches everything, and it needs no
+// listener and no port of its own -- which is most of the argument
+// for an HTTPS administrative surface rather than a port of kadmin's
+// RPC. The same certificate, the same address, the same process.
 func routes(
 	c *config.Config,
 	s *store.Store,
@@ -239,6 +247,12 @@ func routes(
 	mux.Handle(transport.HealthPath, &transport.Health{
 		Check: s.Ping,
 		Log:   log,
+	})
+	mux.Handle(kadm5.Prefix, &kadm5.Server{
+		KDC:   k,
+		Store: s,
+		ACL:   c.AdminACL,
+		Realm: c.Realm,
 	})
 	mux.Handle("/", &transport.Handler{
 		Path:   c.ProxyPath,
