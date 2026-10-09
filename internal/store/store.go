@@ -35,6 +35,10 @@ var ErrNotFound = errors.New("principal not found")
 type Store struct {
 	db   *gorm.DB
 	mkey MasterKey
+
+	// enctypes is the configured supported_enctypes, zero meaning
+	// upstream's default.
+	enctypes SupportedEnctypes
 }
 
 // Open connects to Postgres and makes sure the schema is present.
@@ -116,6 +120,66 @@ func (s *Store) migrate() error {
 // administrative subcommands derive keys and have to seal them with
 // the same key the KDC will unseal them with.
 func (s *Store) MasterKey() MasterKey { return s.mkey }
+
+// Enctypes is which key/salt pairs this realm *creates*, which is
+// kadmin's supported_enctypes. Zero means upstream's default -- see
+// SupportedEnctypes, which explains why the order of the list is
+// load-bearing and which of the three enctype lists this is.
+//
+// It lives on the Store rather than being passed to every write
+// because it is realm configuration, exactly as the master key is,
+// and the two travel to precisely the same places.
+func (s *Store) Enctypes() SupportedEnctypes {
+	return s.enctypes
+}
+
+// SetEnctypes installs the configured list. internal/config calls it
+// once at start-up; a test calls it to reach an enctype the default
+// does not create.
+func (s *Store) SetEnctypes(e SupportedEnctypes) {
+	s.enctypes = e
+}
+
+// SetPassword derives this realm's configured keys for a principal.
+//
+// Every real caller wants this rather than the Principal method: the
+// master key and the enctype list are both the Store's, and passing
+// them separately at each site is how the two drift apart.
+func (s *Store) SetPassword(
+	p *Principal,
+	password string,
+	kvno int32,
+) error {
+	return p.SetPassword(s.mkey, password, kvno, s.enctypes)
+}
+
+// SetPasswordKeepOld is SetPassword that keeps the previous key
+// versions.
+func (s *Store) SetPasswordKeepOld(
+	p *Principal,
+	password string,
+	kvno int32,
+) error {
+	return p.SetPasswordKeepOld(s.mkey, password, kvno,
+		s.enctypes)
+}
+
+// SetRandomKey gives a principal fresh random keys.
+func (s *Store) SetRandomKey(
+	p *Principal,
+	kvno int32,
+) error {
+	return p.SetRandomKey(s.mkey, kvno, s.enctypes)
+}
+
+// SetRandomKeyKeepOld is SetRandomKey that keeps the previous key
+// versions.
+func (s *Store) SetRandomKeyKeepOld(
+	p *Principal,
+	kvno int32,
+) error {
+	return p.SetRandomKeyKeepOld(s.mkey, kvno, s.enctypes)
+}
 
 // Close releases the connection pool.
 func (s *Store) Close() error {

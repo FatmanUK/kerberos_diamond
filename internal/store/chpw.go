@@ -64,12 +64,11 @@ func (s *Store) setNewPassword(
 	keepOld bool,
 ) (int32, error) {
 	kvno := p.HighestKVNO() + 1
-	mkey := s.MasterKey()
 	var err error
 	if keepOld {
-		err = p.SetPasswordKeepOld(mkey, pw, kvno)
+		err = s.SetPasswordKeepOld(p, pw, kvno)
 	} else {
-		err = p.SetPassword(mkey, pw, kvno)
+		err = s.SetPassword(p, pw, kvno)
 	}
 	return kvno, err
 }
@@ -90,12 +89,11 @@ func (s *Store) SetRandomPassword(
 	keepOld bool,
 ) (int32, error) {
 	kvno := p.HighestKVNO() + 1
-	mkey := s.MasterKey()
 	var err error
 	if keepOld {
-		err = p.SetRandomKeyKeepOld(mkey, kvno)
+		err = s.SetRandomKeyKeepOld(p, kvno)
 	} else {
-		err = p.SetRandomKey(mkey, kvno)
+		err = s.SetRandomKey(p, kvno)
 	}
 	if err != nil {
 		return 0, err

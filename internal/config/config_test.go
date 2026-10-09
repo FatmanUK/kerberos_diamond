@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"strings"
 	"testing"
 	"time"
@@ -356,5 +357,59 @@ func TestAdminACLReadsAttributeRestrictions(t *testing.T) {
 	if r.Set != store.AttrRequiresPreAuth {
 		t.Errorf("set mask is %#x, want %#x",
 			r.Set, store.AttrRequiresPreAuth)
+	}
+}
+
+// KD_SUPPORTED_ENCTYPES parses, unset is not an error, and a
+// malformed value's error names the variable -- which is the same
+// three things KD_CAPATHS and KD_DOMAIN_REALM are held to.
+func TestSupportedEnctypes(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_SUPPORTED_ENCTYPES",
+		"aes128-cts-hmac-sha1-96 aes256-cts-hmac-sha1-96")
+
+	c, err := Load(Serve)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Enctypes) != 2 {
+		t.Fatalf("parsed %v", c.Enctypes)
+	}
+	// The order survives, because it decides which key seals a
+	// ticket: the KDC takes the first key of a principal's
+	// highest key version whatever its enctype.
+	if c.Enctypes[0] != crypto.AES128CTSHMACSHA196 {
+		t.Errorf("first is %v", c.Enctypes[0])
+	}
+}
+
+// Unset leaves the field nil, which means **upstream's default**
+// rather than nothing at all -- the two RFC 3962 types, and no
+// aes-sha2 keys.
+func TestSupportedEnctypesUnsetIsNotAnError(t *testing.T) {
+	setMinimal(t)
+	c, err := Load(Serve)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Enctypes != nil {
+		t.Errorf("unset parsed as %v", c.Enctypes)
+	}
+}
+
+// And a malformed value names the variable, so an operator knows
+// which line to look at.
+func TestSupportedEnctypesMalformed(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_SUPPORTED_ENCTYPES", "aes256-cts nonsense")
+
+	_, err := Load(Serve)
+	if err == nil {
+		t.Fatal("accepted")
+	}
+	if !strings.Contains(err.Error(),
+		"KD_SUPPORTED_ENCTYPES") {
+		t.Errorf("the error does not name the variable: %v",
+			err)
 	}
 }

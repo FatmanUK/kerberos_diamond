@@ -35,14 +35,10 @@ func threeRealms(
 	k *KDC,
 ) (far, mid *KDC) {
 	t.Helper()
-	mkey, err := store.DeriveMasterKey(testRealm, testMasterPW,
-		store.DefaultMasterKeyType)
-	if err != nil {
-		t.Fatal(err)
-	}
 	add := func(realm string, c []string, pw string) {
 		p := store.NewPrincipal(realm, c)
-		if err := p.SetPassword(mkey, pw, 1); err != nil {
+		if err := k.Store.SetPassword(p, pw,
+			1); err != nil {
 			t.Fatalf("SetPassword %v: %v", c, err)
 		}
 		err := k.Store.Save(context.Background(), p)

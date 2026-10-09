@@ -322,14 +322,10 @@ func TestAMapToAnUntrustedRealmFallsThroughToTheSearch(t *testing.T) {
 // this KDC issue a ticket-granting ticket for there.
 func addRefTrust(t *testing.T, k *KDC, realm, pw string) {
 	t.Helper()
-	mkey, err := store.DeriveMasterKey(testRealm, testMasterPW,
-		store.DefaultMasterKeyType)
-	if err != nil {
-		t.Fatal(err)
-	}
 	p := store.NewPrincipal(testRealm,
 		[]string{tgsName, realm})
-	if err := p.SetPassword(mkey, pw, 1); err != nil {
+	if err := k.Store.SetPassword(p, pw,
+		1); err != nil {
 		t.Fatal(err)
 	}
 	if err := k.Store.Save(context.Background(), p); err != nil {

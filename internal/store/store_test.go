@@ -141,7 +141,7 @@ func principal(
 		Realm:    testRealm,
 		NameType: 1,
 	}
-	if err := p.SetPassword(s.mkey, password, 1); err != nil {
+	if err := s.SetPassword(p, password, 1); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 	if err := s.Save(context.Background(), p); err != nil {
@@ -168,9 +168,10 @@ func TestSaveAndLookup(t *testing.T) {
 	if got.Realm != testRealm {
 		t.Errorf("realm is %q", got.Realm)
 	}
-	if len(got.Keys) != len(crypto.Supported()) {
+	want := len(DefaultSupportedEnctypes())
+	if len(got.Keys) != want {
 		t.Fatalf("got %d keys, want %d",
-			len(got.Keys), len(crypto.Supported()))
+			len(got.Keys), want)
 	}
 	if _, err := s.Lookup(ctx, "nobody@"+testRealm); err == nil {
 		t.Error("looked up a principal that is not there")
@@ -242,11 +243,11 @@ func TestKeysComeBackHighestKVNOFirst(t *testing.T) {
 	name := "rolled@" + testRealm
 
 	p := &Principal{Name: name, Realm: testRealm, NameType: 1}
-	if err := p.SetPassword(s.mkey, "old", 1); err != nil {
+	if err := s.SetPassword(p, "old", 1); err != nil {
 		t.Fatal(err)
 	}
 	old := p.Keys
-	if err := p.SetPassword(s.mkey, "new", 3); err != nil {
+	if err := s.SetPassword(p, "new", 3); err != nil {
 		t.Fatal(err)
 	}
 	// Save kvno 1 after kvno 3 so insertion order is wrong.
@@ -285,7 +286,7 @@ func TestSaveReplacesKeysRatherThanAdding(t *testing.T) {
 	name := "replaced@" + testRealm
 	p := principal(t, s, name, "first")
 
-	if err := p.SetPassword(s.mkey, "second", 2); err != nil {
+	if err := s.SetPassword(p, "second", 2); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(ctx, p); err != nil {
@@ -295,9 +296,10 @@ func TestSaveReplacesKeysRatherThanAdding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
-	if len(got.Keys) != len(crypto.Supported()) {
+	want := len(DefaultSupportedEnctypes())
+	if len(got.Keys) != want {
 		t.Fatalf("got %d keys, want %d",
-			len(got.Keys), len(crypto.Supported()))
+			len(got.Keys), want)
 	}
 	for _, k := range got.Keys {
 		if k.KVNO != 2 {
@@ -443,7 +445,7 @@ func TestHighestKVNO(t *testing.T) {
 	name := "versioned@" + testRealm
 
 	p := store2Principal(t, s, name, "old", 1)
-	if err := p.SetPassword(s.mkey, "new", 4); err != nil {
+	if err := s.SetPassword(p, "new", 4); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(ctx, p); err != nil {
@@ -477,7 +479,7 @@ func store2Principal(
 		t.Fatal(err)
 	}
 	p := NewPrincipal(realm, components)
-	if err := p.SetPassword(s.mkey, password, kvno); err != nil {
+	if err := s.SetPassword(p, password, kvno); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(context.Background(), p); err != nil {
@@ -504,7 +506,7 @@ func TestSetRandomKeyIsNotDerivedFromAnything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.SetRandomKey(s.MasterKey(), 2); err != nil {
+	if err := s.SetRandomKey(p, 2); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(ctx, p); err != nil {
@@ -546,9 +548,9 @@ func assertRandomKeys(
 		seen++
 		assertRandomKey(t, row, key, password, salt)
 	}
-	if seen != len(crypto.Supported()) {
-		t.Errorf("%d keys, want one per supported enctype "+
-			"(%d)", seen, len(crypto.Supported()))
+	if seen != len(DefaultSupportedEnctypes()) {
+		t.Errorf("%d keys, want one per configured enctype "+
+			"(%d)", seen, len(DefaultSupportedEnctypes()))
 	}
 }
 
@@ -588,13 +590,12 @@ func assertRandomKey(
 // would leave every previous copy working.
 func TestSetRandomKeyDiffersEveryTime(t *testing.T) {
 	s, _ := testStore(t)
-	mkey := s.MasterKey()
 	first := NewPrincipal(testRealm, []string{"a"})
 	second := NewPrincipal(testRealm, []string{"a"})
-	if err := first.SetRandomKey(mkey, 1); err != nil {
+	if err := s.SetRandomKey(first, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := second.SetRandomKey(mkey, 1); err != nil {
+	if err := s.SetRandomKey(second, 1); err != nil {
 		t.Fatal(err)
 	}
 	if len(first.Keys) == 0 {

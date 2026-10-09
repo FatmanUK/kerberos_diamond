@@ -92,10 +92,14 @@ func postdateRefused(
 // ticket flag of the same bit number (OPTS_COMMON_FLAGS_MASK,
 // kdc/kdc_util.h:493-497). Note that renewable is *not* in it: it
 // needs ticketRenewTime's decision, not a straight copy.
+// OptRequestAnon is in upstream's mask and **not in this one**,
+// because this KDC refuses the option outright rather than issuing a
+// ticket for it -- see refuseAnonymous. Leaving it in the mask is how
+// the flag used to reach a ticket and then be cleared again, which
+// told a client nothing.
 const optsCommonFlagsMask = wire.OptForwardable |
 	wire.OptForwarded | wire.OptProxiable | wire.OptProxy |
-	wire.OptAllowPostdate | wire.OptPostdated |
-	wire.OptRequestAnon
+	wire.OptAllowPostdate | wire.OptPostdated
 
 // ticketFlags computes a new ticket's flags, ported from
 // get_ticket_flags (kdc/kdc_util.c:812-858) for the AS case, where
@@ -125,9 +129,6 @@ func ticketFlags(
 	if disallow&store.AttrDisallowForwardable != 0 {
 		flags &^= wire.FlagForwardable
 	}
-	// Issuing an anonymous ticket from a non-anonymous request is
-	// not supported, here or upstream.
-	flags &^= wire.FlagAnonymous
 	return flags
 }
 

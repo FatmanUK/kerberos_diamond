@@ -190,8 +190,9 @@ func (p *Principal) SetPassword(
 	mkey MasterKey,
 	password string,
 	kvno int32,
+	types SupportedEnctypes,
 ) error {
-	return p.setPassword(mkey, password, kvno, false)
+	return p.setPassword(mkey, password, kvno, false, types)
 }
 
 // SetPasswordKeepOld is SetPassword that keeps the previous key
@@ -210,8 +211,9 @@ func (p *Principal) SetPasswordKeepOld(
 	mkey MasterKey,
 	password string,
 	kvno int32,
+	types SupportedEnctypes,
 ) error {
-	return p.setPassword(mkey, password, kvno, true)
+	return p.setPassword(mkey, password, kvno, true, types)
 }
 
 func (p *Principal) setPassword(
@@ -219,13 +221,14 @@ func (p *Principal) setPassword(
 	password string,
 	kvno int32,
 	keep bool,
+	types SupportedEnctypes,
 ) error {
 	components, realm, err := ParseName(p.Name)
 	if err != nil {
 		return err
 	}
 	salt := crypto.Salt(realm, components)
-	return p.setKeys(kvno, keep,
+	return p.setKeys(kvno, keep, types,
 		func(e crypto.EncType) (Key, error) {
 			return newKey(mkey, password, salt, e)
 		})
@@ -236,11 +239,12 @@ func (p *Principal) setPassword(
 func (p *Principal) setKeys(
 	kvno int32,
 	keep bool,
+	types SupportedEnctypes,
 	makeKey func(crypto.EncType) (Key, error),
 ) error {
 	old := p.Keys
 	p.Keys = nil
-	for i, e := range crypto.Supported() {
+	for i, e := range types.types() {
 		k, err := makeKey(e)
 		if err != nil {
 			return err
@@ -301,8 +305,9 @@ func (p *Principal) PurgeOldKeys() int {
 func (p *Principal) SetRandomKey(
 	mkey MasterKey,
 	kvno int32,
+	types SupportedEnctypes,
 ) error {
-	return p.setKeys(kvno, false,
+	return p.setKeys(kvno, false, types,
 		func(e crypto.EncType) (Key, error) {
 			return randomKey(mkey, e)
 		})
@@ -313,8 +318,9 @@ func (p *Principal) SetRandomKey(
 func (p *Principal) SetRandomKeyKeepOld(
 	mkey MasterKey,
 	kvno int32,
+	types SupportedEnctypes,
 ) error {
-	return p.setKeys(kvno, true,
+	return p.setKeys(kvno, true, types,
 		func(e crypto.EncType) (Key, error) {
 			return randomKey(mkey, e)
 		})

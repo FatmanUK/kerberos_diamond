@@ -237,6 +237,30 @@ The layout is filled in; §1 says what each package does.
   reinterpreted — `KD_CAPATHS` is `[capaths]` that way — so an existing
   configuration can be transcribed and its meaning looked up in upstream's
   documentation.
+- **Three enctype lists, and only one of them is `supported_enctypes`.**
+  `KD_SUPPORTED_ENCTYPES` is which key/salt pairs `addprinc` and `cpw`
+  *create*; `permitted_enctypes` is what a session may use; a client's
+  `default_tkt_enctypes` is what it asks for. Upstream's default for the
+  first is the two RFC 3962 types and **not** the aes-sha2 pair
+  (`osconf.hin:109-111`), so a realm left at the default creates no sha2
+  keys — and this project's default is upstream's, deliberately, rather
+  than everything `internal/crypto` can do. **The order is
+  load-bearing**: a ticket is sealed with the first key of a principal's
+  highest key version whatever its enctype
+  (`get_first_current_key`, `kdc_util.c:461-473`), so the first entry is
+  the enctype every service ticket is encrypted with. The golden harness
+  configures both halves explicitly, with the same four in the same
+  order, for exactly that reason.
+- **An anonymous request is refused, not downgraded.**
+  `KDC_OPT_REQUEST_ANONYMOUS` requires the client to be
+  `WELLKNOWN/ANONYMOUS` and then forces pre-authentication
+  (`do_as_req.c:716-735`), which in practice means anonymous PKINIT —
+  a declared non-goal. So the option gets `KDC_ERR_BADOPTION`, and a
+  request naming an ordinary principal gets upstream's own separate
+  status for the contradiction. It used to reach the ticket's flags and
+  have `TKT_FLG_ANONYMOUS` cleared again, which answered a client that
+  asked for anonymity with a ticket naming it and said nothing — the
+  failure mode this section already refuses three times over.
 - **Tools**: `tools/reflow` rewraps comment paragraphs to 70 columns.
   `gofmt` does not wrap, so the rule in `CLAUDE.md` is otherwise
   unenforceable; `make fmt` runs gofmt, reflow, then gofmt again.

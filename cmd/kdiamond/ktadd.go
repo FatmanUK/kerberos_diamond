@@ -69,11 +69,10 @@ func addToKeytab(
 	}
 	if !norandkey {
 		kvno := p.HighestKVNO() + 1
-		mkey := s.MasterKey()
 		if keepOld {
-			err = p.SetRandomKeyKeepOld(mkey, kvno)
+			err = s.SetRandomKeyKeepOld(p, kvno)
 		} else {
-			err = p.SetRandomKey(mkey, kvno)
+			err = s.SetRandomKey(p, kvno)
 		}
 		if err != nil {
 			return err

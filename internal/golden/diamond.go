@@ -127,6 +127,18 @@ func (d *Diamond) open(
 	if err != nil {
 		return err
 	}
+	// The same four enctypes, in the same order, that
+	// realm-setup.sh gives the oracle's supported_enctypes.
+	//
+	// Both halves are configured explicitly and neither is left
+	// at a default, which is the only way the comparison is of
+	// the implementations rather than of the fixture: upstream's
+	// own default creates no aes-sha2 keys at all, so a realm
+	// left at it could never reach that family -- and the *order*
+	// decides which key seals a ticket, because the KDC takes the
+	// first key of the highest key version whatever its enctype
+	// (get_first_current_key, kdc_util.c:461-473).
+	s.SetEnctypes(GoldenEnctypes())
 	d.Store = s
 	d.closers = append(d.closers, func() { s.Close() },
 		func() { admin.Exec(drop) })
@@ -147,7 +159,7 @@ func provision(
 	for _, e := range realmEntries() {
 		p := store.NewPrincipal(Realm, e.components)
 		p.Attributes = e.attrs
-		err := p.SetPassword(mkey, e.password, e.kvno)
+		err := s.SetPassword(p, e.password, e.kvno)
 		if err != nil {
 			return err
 		}
@@ -229,7 +241,7 @@ func provisionFarRealm(
 		{[]string{"krbtgt", MidRealm}, FarMidPassword, 1},
 	} {
 		p := store.NewPrincipal(FarRealm, e.components)
-		err := p.SetPassword(mkey, e.password, e.kvno)
+		err := s.SetPassword(p, e.password, e.kvno)
 		if err != nil {
 			return err
 		}
@@ -263,7 +275,7 @@ func provisionTrust(
 	} {
 		p := store.NewPrincipal(realm,
 			[]string{"krbtgt", Realm})
-		err := p.SetPassword(mkey, password, 1)
+		err := s.SetPassword(p, password, 1)
 		if err != nil {
 			return err
 		}
@@ -322,6 +334,7 @@ func OpenDiamond(
 	if err != nil {
 		return nil, err
 	}
+	s.SetEnctypes(GoldenEnctypes())
 	d := &Diamond{Store: s}
 	d.closers = append(d.closers, func() { s.Close() })
 	d.KDC = &kdc.KDC{
@@ -361,7 +374,7 @@ func provisionReferral(
 ) error {
 	p := store.NewPrincipal(Realm,
 		[]string{"krbtgt", ForeignRealm})
-	err := p.SetPassword(mkey, LocalForeignPassword, 1)
+	err := s.SetPassword(p, LocalForeignPassword, 1)
 	if err != nil {
 		return err
 	}

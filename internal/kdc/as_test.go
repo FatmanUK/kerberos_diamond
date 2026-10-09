@@ -110,7 +110,7 @@ func addPrincipal(
 	t.Helper()
 	p := store.NewPrincipal(testRealm, components)
 	p.Attributes = attrs
-	if err := p.SetPassword(mkey, password, 1); err != nil {
+	if err := s.SetPassword(p, password, 1); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
 	if err := s.Save(context.Background(), p); err != nil {

@@ -88,6 +88,18 @@ type Config struct {
 	// environment at startup.
 	Paths transit.Paths
 
+	// Enctypes is kadmin's supported_enctypes: which key/salt
+	// pairs addprinc and cpw *create*, as distinct from what a
+	// session may use and from what a client asks for. Unset
+	// means upstream's default, which is the two RFC 3962 types
+	// and **not** the aes-sha2 pair.
+	//
+	// The order is load-bearing: a ticket is sealed with the
+	// first key of a principal's highest key version, so the
+	// first entry is the enctype every service ticket is
+	// encrypted with.
+	Enctypes store.SupportedEnctypes
+
 	// Hosts maps a host name to the realm that serves it,
 	// krb5.conf's [domain_realm] in one line. It exists for the
 	// host-based referral and has no other reader: a client
@@ -243,6 +255,14 @@ func (c *Config) parseTables() []error {
 			"KD_ADMIN_ACL: %w", err))
 	} else {
 		c.AdminACL = list
+	}
+	types, err := store.ParseEnctypes(
+		os.Getenv("KD_SUPPORTED_ENCTYPES"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf(
+			"KD_SUPPORTED_ENCTYPES: %w", err))
+	} else {
+		c.Enctypes = types
 	}
 	return errs
 }

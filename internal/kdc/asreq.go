@@ -232,6 +232,24 @@ func (k *KDC) principals(s *asState) (int32, string) {
 	if code, status := k.enterpriseClient(s); code != 0 {
 		return code, status
 	}
+	if code, status := k.refuseAnonymous(s); code != 0 {
+		return code, status
+	}
+	if code, status := k.lookupBoth(ctx, s); code != 0 {
+		return code, status
+	}
+	k.canonNames(s)
+	return 0, ""
+}
+
+// lookupBoth loads the client and the server.
+//
+// A missing client and a missing server get different protocol codes,
+// which is the whole reason they are not one loop.
+func (k *KDC) lookupBoth(
+	ctx context.Context,
+	s *asState,
+) (int32, string) {
 	var err error
 	s.client, err = k.Store.LookupWire(
 		ctx, k.Realm, s.cname.Components)
@@ -251,7 +269,6 @@ func (k *KDC) principals(s *asState) (int32, string) {
 	if err != nil {
 		return wire.ErrCodeGeneric, "LOOKUP_SERVER"
 	}
-	k.canonNames(s)
 	return 0, ""
 }
 

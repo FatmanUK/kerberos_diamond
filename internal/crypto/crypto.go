@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"strings"
 )
 
 // EncType is a Kerberos encryption type number, as it appears on the
@@ -269,4 +270,34 @@ func Supported() []EncType {
 // confounder and the integrity tag.
 func (p *EncProfile) CipherLength(n int) int {
 	return p.HeaderLength + n + p.TrailerLength
+}
+
+// EncTypeByName looks an enctype up by the name krb5.conf uses.
+//
+// The names are the rows' own, which are upstream's
+// (lib/crypto/krb/etypes.c), and the aliases upstream accepts are
+// accepted too: `aes256-cts' and `aes128-cts' are what an operator
+// actually types, and krb5_string_to_enctype takes them (etypes.c's
+// aliases field).
+func EncTypeByName(name string) (EncType, bool) {
+	for i := range profiles {
+		if strings.EqualFold(profiles[i].Name, name) {
+			return profiles[i].EncType, true
+		}
+	}
+	e, ok := encTypeAliases[strings.ToLower(name)]
+	return e, ok
+}
+
+// encTypeAliases are the shorter spellings upstream accepts for the
+// enctypes this project implements.
+var encTypeAliases = map[string]EncType{
+	"aes256-cts":      AES256CTSHMACSHA196,
+	"aes256-sha1":     AES256CTSHMACSHA196,
+	"aes128-cts":      AES128CTSHMACSHA196,
+	"aes128-sha1":     AES128CTSHMACSHA196,
+	"aes128-sha2":     AES128CTSHMACSHA256128,
+	"aes256-sha2":     AES256CTSHMACSHA384192,
+	"aes128-cts-sha2": AES128CTSHMACSHA256128,
+	"aes256-cts-sha2": AES256CTSHMACSHA384192,
 }

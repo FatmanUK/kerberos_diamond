@@ -50,7 +50,7 @@ func TestHistoryRemembersAndThenForgets(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = p.SetPassword(s.MasterKey(), used[i],
+		err = s.SetPassword(p, used[i],
 			int32(i)+1)
 		if err != nil {
 			t.Fatal(err)
@@ -176,7 +176,7 @@ func TestKeepOldKeepsThePreviousVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = p.SetPasswordKeepOld(s.MasterKey(),
+	err = s.SetPasswordKeepOld(p,
 		"second-password", 2)
 	if err != nil {
 		t.Fatal(err)

@@ -171,6 +171,7 @@ func serve() error {
 	if err != nil {
 		return err
 	}
+	s.SetEnctypes(c.Enctypes)
 	defer s.Close()
 	return listen(c, s)
 }

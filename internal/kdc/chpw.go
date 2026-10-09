@@ -204,7 +204,7 @@ func (k *KDC) storePassword(
 	// once -- which is what keepold exists to avoid, and which a
 	// self-service password change has no way to ask for.
 	kvno := p.HighestKVNO() + 1
-	err = p.SetPassword(k.Store.MasterKey(), password, kvno)
+	err = k.Store.SetPassword(p, password, kvno)
 	if err != nil {
 		return wire.KPasswdHardError, "Failed deriving keys"
 	}

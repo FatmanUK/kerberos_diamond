@@ -47,6 +47,7 @@ func openStore() (*store.Store, *config.Config, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	s.SetEnctypes(c.Enctypes)
 	return s, c, nil
 }
 
@@ -172,7 +173,7 @@ func newPrincipal(
 		return nil, err
 	}
 	p := store.NewPrincipal(realm, components)
-	err = p.SetPassword(s.MasterKey(), pw, kvno)
+	err = s.SetPassword(p, pw, kvno)
 	if err != nil {
 		return nil, err
 	}
