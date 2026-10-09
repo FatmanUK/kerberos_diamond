@@ -41,24 +41,44 @@ principal administration, standing in for kadmin:
   kdiamond addprinc -pw PW [-kvno N] [-maxlife D]
                     [-maxrenewlife D] [-attr SPEC] PRINC
   kdiamond modprinc [-maxlife D] [-maxrenewlife D]
-                    [-attr SPEC] PRINC
+                    [-attr SPEC] [-policy NAME] PRINC
   kdiamond cpw -pw PW PRINC       change a password, bumping the kvno
   kdiamond delprinc PRINC         remove a principal
   kdiamond getprinc PRINC         print what the KDC knows
   kdiamond listprincs             print every principal's name
   kdiamond ktadd -k FILE [-norandkey] PRINC
                                   write keys into a keytab
+`, version)
+	usagePolicies()
+}
 
+// usagePolicies is the second half, split off only to keep one
+// function under this project's forty-line rule.
+func usagePolicies() {
+	fmt.Fprint(os.Stderr, `
 ktadd re-keys the principal unless -norandkey is given, because a
 keytab is a copy of a secret and handing one out without changing the
 key would leave every previous copy working. That is kadmin's
 behaviour too.
 
+password policies, also kadmin's:
+  kdiamond addpol [-minlife D] [-maxlife D] [-minlength N]
+                  [-minclasses N] [-history N] POLICY
+  kdiamond modpol [same flags] POLICY
+  kdiamond delpol POLICY          remove a policy nothing names
+  kdiamond getpol POLICY          print one
+  kdiamond getpols                name every policy
+
+A principal names a policy with modprinc -policy, and the policy
+constrains the passwords set for it. A principal naming no policy is
+unconstrained, which is not the same as naming one whose values are
+all defaults.
+
 An attribute SPEC is kadmin's, sign included: +requires_preauth,
 -allow_tix, +forwardable and so on. Most are inverted -- +forwardable
 *clears* DISALLOW_FORWARDABLE -- so read them as what the principal is
 permitted, not as which bit is set.
-`, version)
+`)
 }
 
 func run(args []string) error {
@@ -75,33 +95,48 @@ func run(args []string) error {
 	}
 
 	rest := fs.Args()
-	switch cmd := fs.Arg(0); cmd {
+	cmd := fs.Arg(0)
+	switch cmd {
 	case "serve":
 		return serve()
 	case "version":
 		fmt.Println(version)
 		return nil
-	case "addprinc":
-		return addprinc(rest[1:])
-	case "modprinc":
-		return modprinc(rest[1:])
-	case "cpw":
-		return cpw(rest[1:])
-	case "delprinc":
-		return delprinc(rest[1:])
-	case "getprinc":
-		return getprinc(rest[1:])
-	case "listprincs":
-		return listprincs(rest[1:])
-	case "ktadd", "xst":
-		return ktadd(rest[1:])
 	case "":
 		usage()
 		return errors.New("no subcommand given")
-	default:
-		usage()
-		return fmt.Errorf("unknown subcommand %q", cmd)
 	}
+	if fn := adminCommand(cmd); fn != nil {
+		return fn(rest[1:])
+	}
+	usage()
+	return fmt.Errorf("unknown subcommand %q", cmd)
+}
+
+// adminCommand maps a subcommand name to its handler, or nil.
+//
+// A table rather than a switch because the aliases are part of the
+// vocabulary: kadmin's own ktadd is also xst and its getpols is also
+// listpols, and an operator who types either should be answered.
+func adminCommand(cmd string) func([]string) error {
+	return map[string]func([]string) error{
+		"addprinc":        addprinc,
+		"ank":             addprinc,
+		"modprinc":        modprinc,
+		"cpw":             cpw,
+		"change_password": cpw,
+		"delprinc":        delprinc,
+		"getprinc":        getprinc,
+		"listprincs":      listprincs,
+		"ktadd":           ktadd,
+		"xst":             ktadd,
+		"addpol":          addpol,
+		"modpol":          modpol,
+		"delpol":          delpol,
+		"getpol":          getpol,
+		"getpols":         getpols,
+		"listpols":        getpols,
+	}[cmd]
 }
 
 // serve loads the configuration and starts the KDC.

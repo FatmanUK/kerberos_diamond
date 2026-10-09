@@ -170,10 +170,6 @@ func (k *KDC) setPassword(
 			"Changing your own password requires an " +
 				"initial ticket"
 	}
-	if password == "" {
-		return wire.KPasswdSoftError,
-			"An empty password is not accepted"
-	}
 	ctx := context.Background()
 	p, err := k.Store.Lookup(ctx, target)
 	if errors.Is(err, store.ErrNotFound) {
@@ -182,6 +178,20 @@ func (k *KDC) setPassword(
 	if err != nil {
 		return wire.KPasswdHardError, "Database unavailable"
 	}
+	code, text := k.checkPolicy(ctx, p, password)
+	if code != wire.KPasswdSuccess {
+		return code, text
+	}
+	return k.storePassword(ctx, p, password)
+}
+
+// storePassword writes the new keys and everything that moves with
+// them.
+func (k *KDC) storePassword(
+	ctx context.Context,
+	p *store.Principal,
+	password string,
+) (uint16, string) {
 	// The key version goes up by one, which is what makes a
 	// ticket already issued under the old key still verifiable
 	// until it expires -- except that SetPassword replaces the
@@ -189,9 +199,13 @@ func (k *KDC) setPassword(
 	// fact it does not. That is the keepold gap, recorded here
 	// because this is the first place it bites.
 	kvno := p.HighestKVNO() + 1
-	if err := p.SetPassword(k.Store.MasterKey(), password,
-		kvno); err != nil {
+	err := p.SetPassword(k.Store.MasterKey(), password, kvno)
+	if err != nil {
 		return wire.KPasswdHardError, "Failed deriving keys"
+	}
+	if err := k.Store.SetPasswordExpiry(ctx, p,
+		k.now()); err != nil {
+		return wire.KPasswdHardError, "Failed setting expiry"
 	}
 	p.LastPWChange = k.now()
 	// And the bit that demanded the change is cleared, which
@@ -416,4 +430,41 @@ func (k *KDC) chpwError(result []byte) []byte {
 		return nil
 	}
 	return out
+}
+
+// checkPolicy runs the two constraints a self-service change is
+// subject to: the quality rules of whatever policy the principal
+// names, and the minimum time since its last change.
+//
+// Both answer KRB5_KPASSWD_SOFTERROR, which is the code that tells a
+// client the password was *rejected* rather than that something went
+// wrong -- upstream maps every PASS_Q_* and PASS_TOOSOON to it
+// (schpw.c:246-273), and kpasswd prints the string beside it. So the
+// sentence matters: it is the only thing telling a user what to type
+// instead.
+func (k *KDC) checkPolicy(
+	ctx context.Context,
+	p *store.Principal,
+	password string,
+) (uint16, string) {
+	if password == "" {
+		return wire.KPasswdSoftError,
+			"An empty password is not accepted"
+	}
+	err := k.Store.CheckPassword(ctx, p, password)
+	if err != nil {
+		if errors.Is(err, store.ErrPasswordTooShort) ||
+			errors.Is(err, store.ErrPasswordTooSimple) {
+			return wire.KPasswdSoftError, err.Error()
+		}
+		return wire.KPasswdHardError, "Policy unavailable"
+	}
+	err = k.Store.CheckMinPasswordLife(ctx, p, k.now())
+	if errors.Is(err, store.ErrPasswordTooSoon) {
+		return wire.KPasswdSoftError, err.Error()
+	}
+	if err != nil {
+		return wire.KPasswdHardError, "Policy unavailable"
+	}
+	return wire.KPasswdSuccess, ""
 }

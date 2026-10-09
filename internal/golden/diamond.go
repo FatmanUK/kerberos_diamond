@@ -144,30 +144,7 @@ func provision(
 	s *store.Store,
 	mkey store.MasterKey,
 ) error {
-	type entry struct {
-		components []string
-		password   string
-		kvno       int32
-		attrs      uint32
-	}
-	for _, e := range []entry{
-		{[]string{UserName}, UserPassword, 1, 0},
-		{[]string{PreauthName}, UserPassword, 1,
-			store.AttrRequiresPreAuth},
-		{[]string{"krbtgt", Realm}, TgtPassword,
-			TgtKVNO, 0},
-		{ServiceName, ServicePassword, 1, 0},
-		{[]string{PeerName}, PeerPassword, 1,
-			store.AttrDisallowSvr},
-		// PWCHANGE_SERVICE is what exempts a principal whose
-		// password has expired from needing a valid one to
-		// get a ticket here -- without it there would be no
-		// way to change an expired password, which is the
-		// condition the whole service exists for. kdb5_util
-		// create sets it on this principal and so does this.
-		{ChangePWName, ChangePWPassword, 1,
-			store.AttrPWChangeService},
-	} {
+	for _, e := range realmEntries() {
 		p := store.NewPrincipal(Realm, e.components)
 		p.Attributes = e.attrs
 		err := p.SetPassword(mkey, e.password, e.kvno)
@@ -185,6 +162,37 @@ func provision(
 		return err
 	}
 	return provisionFarRealm(ctx, s, mkey)
+}
+
+// fixtureEntry is one principal the fixture holds.
+type fixtureEntry struct {
+	components []string
+	password   string
+	kvno       int32
+	attrs      uint32
+}
+
+// realmEntries is the oracle's realm, principal for principal.
+func realmEntries() []fixtureEntry {
+	return []fixtureEntry{
+		{[]string{UserName}, UserPassword, 1, 0},
+		{[]string{PreauthName}, UserPassword, 1,
+			store.AttrRequiresPreAuth},
+		{[]string{"krbtgt", Realm}, TgtPassword,
+			TgtKVNO, 0},
+		{ServiceName, ServicePassword, 1, 0},
+		{[]string{PeerName}, PeerPassword, 1,
+			store.AttrDisallowSvr},
+		// PWCHANGE_SERVICE is what exempts a principal
+		// whose password has expired from needing a valid
+		// one to get a ticket here -- without it there
+		// would be no way to change an expired password,
+		// which is the condition the whole service exists
+		// for. kdb5_util create sets it on this principal
+		// and so does this.
+		{ChangePWName, ChangePWPassword, 1,
+			store.AttrPWChangeService},
+	}
 }
 
 // provisionFarRealm adds the far realm's own principals, so that a Go

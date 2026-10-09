@@ -356,3 +356,66 @@ func ticketSpan(list string) (time.Time, time.Time, bool) {
 	}
 	return time.Time{}, time.Time{}, false
 }
+
+// The policy subcommands, exercised as a binary with arguments rather
+// than by calling the functions behind them -- so a flag that was
+// never registered, or a subcommand missing from the dispatch, fails
+// here.
+func TestAdminPolicies(t *testing.T) {
+	bin := buildKdiamond(t)
+	url, _ := adminScratch(t, "kd_admin_policy")
+
+	mustRun(t, bin, url, "addpol", "-minlength", "12",
+		"-minclasses", "2", "standard")
+	got := mustRun(t, bin, url, "getpol", "standard")
+	for _, want := range []string{
+		"Minimum password length: 12",
+		"Minimum number of password character classes: 2",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("getpol has no %q:\n%s", want, got)
+		}
+	}
+	if list := mustRun(t, bin, url, "getpols"); !strings.Contains(
+		list, "standard") {
+		t.Errorf("getpols omitted it:\n%s", list)
+	}
+	// modpol changes what it was given and leaves the rest.
+	mustRun(t, bin, url, "modpol", "-minlength", "16",
+		"standard")
+	got = mustRun(t, bin, url, "getpol", "standard")
+	if !strings.Contains(got, "Minimum password length: 16") ||
+		!strings.Contains(got, "classes: 2") {
+		t.Errorf("modpol changed too much:\n%s", got)
+	}
+	assertPolicyBindsAPrincipal(t, bin, url)
+}
+
+// A principal names a policy and the policy then constrains the
+// passwords set for it -- including through kdiamond cpw, because
+// upstream applies the quality rules to an administrator's change as
+// much as to a user's own (svr_principal.c:1281).
+func assertPolicyBindsAPrincipal(t *testing.T, bin, url string) {
+	t.Helper()
+	mustRun(t, bin, url, "addprinc", "-pw", "a-long-password-1",
+		"someone")
+	mustRun(t, bin, url, "modprinc", "-policy", "standard",
+		"someone")
+
+	out, err := kdiamond(t, bin, url, "cpw", "-pw", "short",
+		"someone")
+	if err == nil {
+		t.Errorf("a short password was accepted:\n%s", out)
+	}
+	mustRun(t, bin, url, "cpw", "-pw", "a-long-password-2",
+		"someone")
+
+	// And a policy a principal names cannot be deleted, because
+	// the principal would silently lose its constraints.
+	out, err = kdiamond(t, bin, url, "delpol", "standard")
+	if err == nil {
+		t.Errorf("a policy in use was deleted:\n%s", out)
+	}
+	mustRun(t, bin, url, "modprinc", "-clearpolicy", "someone")
+	mustRun(t, bin, url, "delpol", "standard")
+}

@@ -101,7 +101,7 @@ func limitPool(db *gorm.DB) error {
 func (s *Store) migrate() error {
 	err := s.db.AutoMigrate(
 		&Principal{}, &Key{}, &StringAttr{},
-		&TLDatum{}, &Alias{},
+		&TLDatum{}, &Alias{}, &Policy{},
 	)
 	if err != nil {
 		return fmt.Errorf("store: migrate: %w", err)

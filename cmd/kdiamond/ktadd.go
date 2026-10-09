@@ -120,13 +120,10 @@ func keytabEntries(
 			return nil, err
 		}
 		out = append(out, keytab.Entry{
-			Realm:      realm,
-			Components: components,
-			NameType:   nameTypeFor(components),
-			Timestamp:  now,
-			KVNO:       row.KVNO,
-			EncType:    row.EType,
-			Key:        key,
+			Realm: realm, Components: components,
+			NameType:  nameTypeFor(components),
+			Timestamp: now, KVNO: row.KVNO,
+			EncType: row.EType, Key: key,
 		})
 	}
 	if len(out) == 0 {

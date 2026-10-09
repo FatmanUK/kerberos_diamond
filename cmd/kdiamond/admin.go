@@ -194,6 +194,10 @@ func modprinc(args []string) error {
 	maxRenew := fs.Duration("maxrenewlife", 0,
 		"maximum renewable life")
 	attrs := attrFlag(fs)
+	policy := fs.String("policy", "",
+		"the password policy this principal follows")
+	clearPolicy := fs.Bool("clearpolicy", false,
+		"stop following any policy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -211,14 +215,36 @@ func modprinc(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := applyAll(p, *attrs); err != nil {
+	err = modifyPrincipal(ctx, s, p, *attrs, *policy,
+		*clearPolicy, *maxLife, *maxRenew)
+	if err != nil {
 		return err
 	}
-	setLifetimes(p, *maxLife, *maxRenew)
 	if err := s.Save(ctx, p); err != nil {
 		return err
 	}
 	fmt.Printf("Principal %q modified.\n", name)
+	return nil
+}
+
+// modifyPrincipal applies everything modprinc can change.
+func modifyPrincipal(
+	ctx context.Context,
+	s *store.Store,
+	p *store.Principal,
+	attrs []string,
+	policy string,
+	clearPolicy bool,
+	maxLife, maxRenew time.Duration,
+) error {
+	if err := applyAll(p, attrs); err != nil {
+		return err
+	}
+	err := setPolicy(ctx, s, p, policy, clearPolicy)
+	if err != nil {
+		return err
+	}
+	setLifetimes(p, maxLife, maxRenew)
 	return nil
 }
 
@@ -251,8 +277,7 @@ func cpw(args []string) error {
 	if err != nil {
 		return err
 	}
-	kvno := p.HighestKVNO() + 1
-	err = p.SetPassword(s.MasterKey(), *pw, kvno)
+	kvno, err := changePassword(ctx, s, p, *pw)
 	if err != nil {
 		return err
 	}
@@ -262,6 +287,39 @@ func cpw(args []string) error {
 	fmt.Printf("Password for %q changed, now key version %d.\n",
 		name, kvno)
 	return nil
+}
+
+// changePassword does the work, and the policy's quality rules apply
+// to an administrator's change as much as to a user's own: upstream
+// calls passwd_check from chpass_principal_3, which both paths go
+// through (svr_principal.c:1281).
+//
+// What does *not* apply is the minimum password life. An
+// administrator with the authority to change a password has the
+// authority to change it now, which is why upstream reaches
+// check_min_life only from the self-service branch
+// (kadmin/server/misc.c:24-32).
+func changePassword(
+	ctx context.Context,
+	s *store.Store,
+	p *store.Principal,
+	pw string,
+) (int32, error) {
+	if err := s.CheckPassword(ctx, p, pw); err != nil {
+		return 0, err
+	}
+	kvno := p.HighestKVNO() + 1
+	if err := p.SetPassword(s.MasterKey(), pw, kvno); err != nil {
+		return 0, err
+	}
+	err := s.SetPasswordExpiry(ctx, p, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	// And the bit that demanded a change is cleared, as it is on
+	// a self-service change (svr_principal.c:1298).
+	p.Attributes &^= store.AttrRequiresPWChange
+	return kvno, nil
 }
 
 // delprinc removes a principal.
@@ -413,4 +471,42 @@ func lifeString(secs int32) string {
 	return fmt.Sprintf("%d days %02d:%02d:%02d",
 		secs/86400, int(d.Hours())%24,
 		int(d.Minutes())%60, secs%60)
+}
+
+// setPolicy attaches or detaches a password policy.
+//
+// Attaching one recomputes the password expiry from its maximum life,
+// which upstream does in the same place (svr_principal.c:613-634),
+// and detaching one clears the expiry (:628-634). Without that a
+// principal moved off an expiring policy would keep the deadline it
+// no longer has a reason for.
+//
+// A policy that does not exist is refused here, where a *stored*
+// reference to a missing policy is tolerated at password-change time.
+// The asymmetry is deliberate and is upstream's: naming a typo is a
+// mistake worth catching, while a policy deleted out from under a
+// principal is a state that has to be survivable.
+func setPolicy(
+	ctx context.Context,
+	s *store.Store,
+	p *store.Principal,
+	name string,
+	clear bool,
+) error {
+	if clear && name != "" {
+		return errors.New(
+			"-policy and -clearpolicy are exclusive")
+	}
+	switch {
+	case clear:
+		p.Policy = ""
+	case name != "":
+		if _, err := s.LookupPolicy(ctx, name); err != nil {
+			return err
+		}
+		p.Policy = name
+	default:
+		return nil
+	}
+	return s.SetPasswordExpiry(ctx, p, time.Now())
 }

@@ -212,3 +212,72 @@ func requirePasswordChange(t *testing.T, ctx context.Context) {
 		t.Fatal(err)
 	}
 }
+
+// TestStockKpasswdHonoursAPolicy is the policy's end-to-end case, and
+// the assertion is on what the *user* sees: a password change refused
+// with a sentence explaining why.
+//
+// The result code carries the explanation, which is the point of
+// having one. Upstream maps every quality failure to
+// KRB5_KPASSWD_SOFTERROR (schpw.c:246-273), which tells a client the
+// password was rejected rather than that something went wrong, and
+// kpasswd prints the string beside it -- so the sentence is the only
+// thing telling the user what to type instead.
+func TestStockKpasswdHonoursAPolicy(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 60*time.Second)
+	defer cancel()
+
+	env := pointAtDiamondWith(t, ctx, o, "policy",
+		changePWConf)
+	attachPolicy(t, ctx, 12)
+
+	// Too short, so the change is refused and the old password
+	// still works.
+	out, err := o.ExecEnv(ctx, env,
+		UserPassword+"\nshort\nshort\n", "kpasswd",
+		UserName+"@"+Realm)
+	if err == nil {
+		t.Errorf("a short password was accepted:\n%s", out)
+	}
+	if !strings.Contains(out, "too short") {
+		t.Errorf("kpasswd did not say why:\n%s", out)
+	}
+	assertKinitPassword(t, ctx, o, env, UserPassword, true)
+
+	// Long enough, and it goes through -- which is what says the
+	// policy was consulted rather than the change being broken.
+	long := "long-enough-to-pass"
+	out, err = o.ExecEnv(ctx, env,
+		UserPassword+"\n"+long+"\n"+long+"\n", "kpasswd",
+		UserName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("a long password was refused: %v\n%s",
+			err, out)
+	}
+	assertKinitPassword(t, ctx, o, env, long, true)
+}
+
+// attachPolicy creates a policy with a minimum length and points the
+// user at it, reaching past the KDC because nothing in the protocol
+// can ask for either.
+func attachPolicy(
+	t *testing.T, ctx context.Context, minLength int32,
+) {
+	t.Helper()
+	d := diamondOf(t)
+	pol := store.NewPolicy("golden")
+	pol.PWMinLength = minLength
+	if err := d.Store.SavePolicy(ctx, pol); err != nil {
+		t.Fatal(err)
+	}
+	p, err := d.Store.Lookup(ctx, UserName+"@"+Realm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Policy = "golden"
+	if err := d.Store.Save(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+}
