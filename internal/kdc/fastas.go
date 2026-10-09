@@ -111,9 +111,9 @@ func (k *KDC) openArmorTicket(
 	if code != 0 {
 		return zero, code, status
 	}
-	if tsAfter(stamp(k.now()), stamp(tkt.EndTime)) {
-		return zero, wire.ErrCodeTktExpired,
-			"ARMOR TICKET EXPIRED"
+	if code, status := k.validateTicketTimes(
+		tkt, "ARMOR TICKET"); code != 0 {
+		return zero, code, status
 	}
 	return tkt, 0, ""
 }

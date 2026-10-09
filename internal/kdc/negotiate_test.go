@@ -2,6 +2,7 @@ package kdc
 
 import (
 	"testing"
+	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/spnego"
@@ -354,5 +355,65 @@ func TestAcceptNegotiateRefusals(t *testing.T) {
 					kerr.ErrorCode, c.want)
 			}
 		})
+	}
+}
+
+// Both ends of a presented ticket's validity interval forgive clock
+// skew, which is krb5int_validate_times
+// (lib/krb5/krb/valid_times.c:42-47) and which the two hand-written
+// checks this replaced did not do.
+//
+// It is not a detail. Clock skew exists because a client's clock is
+// never exactly a server's, and a server that compared against the
+// raw times would refuse tickets a stock server accepts from exactly
+// the clients skew was invented for -- intermittently, and only near
+// a boundary, which is the worst way for it to be wrong.
+func TestTheTicketIntervalForgivesSkew(t *testing.T) {
+	k := testKDC(t)
+	skew := k.skew()
+	for _, c := range []struct {
+		why   string
+		start time.Duration
+		end   time.Duration
+		want  int32
+	}{
+		{"comfortably valid", -time.Hour, time.Hour, 0},
+		{"expired inside the skew window", -time.Hour,
+			-skew / 2, 0},
+		{"expired outside it", -time.Hour, -2 * skew,
+			wire.ErrCodeTktExpired},
+		{"starting inside the skew window", skew / 2,
+			time.Hour, 0},
+		{"starting outside it", 2 * skew, 3 * time.Hour,
+			wire.ErrCodeTktNYV},
+	} {
+		t.Run(c.why, func(t *testing.T) {
+			now := k.now()
+			tkt := wire.EncTicketPart{
+				AuthTime:  now.Add(c.start),
+				StartTime: now.Add(c.start),
+				EndTime:   now.Add(c.end),
+			}
+			code, _ := k.validateTicketTimes(tkt, "T")
+			if code != c.want {
+				t.Errorf("code %d, want %d", code,
+					c.want)
+			}
+		})
+	}
+}
+
+// A ticket with no start time is valid from its *authentication*
+// time, not from the beginning of time (valid_times.c:37-40).
+func TestAnAbsentStartTimeMeansTheAuthTime(t *testing.T) {
+	k := testKDC(t)
+	now := k.now()
+	tkt := wire.EncTicketPart{
+		AuthTime: now.Add(2 * k.skew()),
+		EndTime:  now.Add(time.Hour),
+	}
+	code, _ := k.validateTicketTimes(tkt, "T")
+	if code != wire.ErrCodeTktNYV {
+		t.Errorf("code %d, want TKT_NYV", code)
 	}
 }

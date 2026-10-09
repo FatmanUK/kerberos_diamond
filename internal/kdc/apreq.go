@@ -213,18 +213,20 @@ func (k *KDC) adminService(tkt wire.Ticket) (int32, string) {
 	return 0, ""
 }
 
-// openAdminTicket opens the ticket and then checks the things
-// upstream's krb5_rd_req leaves to its caller.
+// openAdminTicket opens the ticket and checks the interval and the
+// INVALID flag, which is what krb5_rd_req does
+// (krb5int_validate_times at rd_req_dec.c:627 and the flag at
+// :635-637).
 //
-// Found while writing this: krb5_rd_req checks the authenticator's
-// clock skew and the ticket's INVALID flag (rd_req_dec.c:631-637) and
-// **nothing about the ticket's validity interval at all**. An expired
-// ticket opens cleanly; the GSS layer stores the end time as the
-// security context's lifetime (accept_sec_context.c:346) and leaves
-// the application to notice. That is reasonable for a long-lived
-// context and wrong for a surface that provisions principals, so the
-// interval is checked here -- which is the choice openArmorTicket
-// already made for the FAST armor ticket.
+// **A correction to what B1 recorded.** That commit said krb5_rd_req
+// checks nothing about a ticket's validity interval, citing :631-637
+// -- which is the authenticator's skew check and the INVALID flag,
+// and is where the reading stopped. The interval check is four lines
+// above it. So checking the interval here is agreement with upstream
+// and not a deliberate divergence from it, and the two places this
+// project checked it by hand had drifted: neither forgave clock skew
+// and neither fell back to the authentication time for a ticket with
+// no start time. Both are validateTicketTimes' business now.
 func (k *KDC) openAdminTicket(
 	ap wire.APReq,
 ) (wire.EncTicketPart, int32, string) {
@@ -237,19 +239,16 @@ func (k *KDC) openAdminTicket(
 	if code != 0 {
 		return zero, code, status
 	}
-	now := stamp(k.now())
-	if tsAfter(now, stamp(tkt.EndTime)) {
-		return zero, wire.ErrCodeTktExpired,
-			"ADMIN TICKET EXPIRED"
+	if code, status := k.validateTicketTimes(
+		tkt, "ADMIN TICKET"); code != 0 {
+		return zero, code, status
 	}
-	// An INVALID ticket is postdated and not yet validated, and a
-	// start time still ahead is the same condition said the other
-	// way round. The TGS path answers TKT_NYV for the first
-	// (checkTGSOpts, tgspolicy.go:51-54) and this agrees with it.
-	if tkt.Flags.Has(wire.FlagInvalid) ||
-		tsAfter(stamp(tkt.StartTime), now) {
+	// An INVALID ticket is postdated and not yet validated, which
+	// krb5_rd_req refuses separately from the interval
+	// (:635-637).
+	if tkt.Flags.Has(wire.FlagInvalid) {
 		return zero, wire.ErrCodeTktNYV,
-			"ADMIN TICKET NOT VALID"
+			"ADMIN TICKET INVALID"
 	}
 	return tkt, 0, ""
 }
