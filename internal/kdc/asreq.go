@@ -157,6 +157,32 @@ func (s *asState) nameOrNil() *wire.PrincipalName {
 
 // principals loads the client and the requested server.
 //
+// ourRealm insists the request names this realm, exactly, and the
+// exactness is load-bearing beyond the obvious.
+//
+// Upstream canonicalises the issued ticket's client realm from the
+// *database entry* rather than from the request, and does it whether
+// or not KDC_OPT_CANONICALIZE was asked for -- "The realm is always
+// canonicalized" (do_as_req.c:680-686) -- because its KDB layer can
+// hand back an entry whose realm differs from the one asked for.
+//
+// This KDC satisfies that rule by construction instead: a request
+// naming any other realm is refused here, the lookup that follows is
+// made with k.Realm, and the reply carries k.Realm, so the three can
+// never disagree.
+//
+// Which means relaxing this check -- matching the realm
+// case-insensitively, say, which looks like a kindness -- would
+// *introduce* the divergence rather than remove a restriction: the
+// ticket would then have to carry the database's spelling and not the
+// request's, and nothing downstream does that.
+func (k *KDC) ourRealm(s *asState) (int32, string) {
+	if s.req.Body.Realm != k.Realm {
+		return wire.ErrCodeCPrincipalUnknown, "WRONG REALM"
+	}
+	return 0, ""
+}
+
 // A missing client and a missing server get different protocol codes,
 // which is why store.ErrNotFound is one error and the distinction is
 // made here.
@@ -169,8 +195,8 @@ func (k *KDC) principals(s *asState) (int32, string) {
 	if s.req.Body.SName == nil {
 		return wire.ErrCodeSPrincipalUnknown, "NO SERVER NAME"
 	}
-	if s.req.Body.Realm != k.Realm {
-		return wire.ErrCodeCPrincipalUnknown, "WRONG REALM"
+	if code, status := k.ourRealm(s); code != 0 {
+		return code, status
 	}
 	var err error
 	s.client, err = k.Store.LookupWire(

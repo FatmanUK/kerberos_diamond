@@ -557,3 +557,64 @@ func decodeTicket(
 	}
 	return tkt
 }
+
+// A request naming a realm this KDC does not serve is refused, and
+// the refusal is what keeps the issued ticket's client realm honest.
+//
+// Upstream takes the ticket's client realm from the *database entry*
+// and not from the request, and does it whether or not
+// KDC_OPT_CANONICALIZE was asked for -- "The realm is always
+// canonicalized" (do_as_req.c:680-686) -- because its KDB layer can
+// hand back an entry whose realm differs from the one asked for. This
+// KDC cannot reach that state: the realm must match exactly
+// (principals, asreq.go), the lookup is made with the KDC's own
+// realm, and the reply carries the KDC's own realm, so the three can
+// never disagree.
+//
+// So this asserts the gate rather than the canonicalisation, because
+// the gate is what makes the canonicalisation unnecessary. A change
+// that matched realms case-insensitively -- which looks like a
+// kindness -- would pass every other test here and start issuing
+// tickets whose crealm came from the request. That is the divergence,
+// not the fix.
+func TestAnotherRealmIsRefusedAtTheAS(t *testing.T) {
+	k := testKDC(t)
+	for _, realm := range []string{
+		strings.ToLower(testRealm),
+		testRealm + ".",
+		"ELSEWHERE.TEST",
+		"",
+	} {
+		t.Run(realm, func(t *testing.T) {
+			req := asRequest([]string{"user"})
+			req.Body.Realm = realm
+			_, kerr := as(t, k, req)
+			if kerr == nil {
+				t.Fatalf("accepted realm %q", realm)
+			}
+			if kerr.ErrorCode !=
+				wire.ErrCodeCPrincipalUnknown {
+				t.Errorf("code %d for %q",
+					kerr.ErrorCode, realm)
+			}
+		})
+	}
+}
+
+// And the realm the reply carries is the KDC's own configuration,
+// which is the other half of the same fact.
+func TestTheReplyCarriesTheKDCsOwnRealm(t *testing.T) {
+	k := testKDC(t)
+	rep, kerr := as(t, k, asRequest([]string{"user"}))
+	if kerr != nil {
+		t.Fatalf("refused: %v", kerr)
+	}
+	if rep.CRealm != k.Realm {
+		t.Errorf("crealm is %q, want %q", rep.CRealm,
+			k.Realm)
+	}
+	if rep.Ticket.Realm != k.Realm {
+		t.Errorf("the ticket's realm is %q",
+			rep.Ticket.Realm)
+	}
+}
