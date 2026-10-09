@@ -128,6 +128,14 @@ func (s *tgsState) encTicketPart() wire.EncTicketPart {
 		StartTime: optStamp(s.start),
 		EndTime:   unstamp(s.end),
 		RenewTill: optStamp(s.renew),
+
+		// The request's own authorization data and the
+		// presented ticket's, filtered and in that order.
+		// Decided by ticketAuthData before the reply is
+		// built, because an AD-MANDATORY-FOR-KDC element
+		// refuses the request rather than changing the
+		// ticket.
+		AuthorizationData: s.authData,
 	}
 }
 

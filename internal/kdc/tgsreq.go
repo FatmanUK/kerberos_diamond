@@ -2,6 +2,7 @@ package kdc
 
 import (
 	"context"
+	"encoding/asn1"
 	"errors"
 	"time"
 
@@ -41,6 +42,14 @@ type tgsState struct {
 	// fast is the FAST tunnel this request arrived through, or
 	// nil if it arrived in the open.
 	fast *fastState
+
+	// authData is the authorization data the new ticket carries:
+	// the request's own and the presented ticket's, filtered of
+	// everything only a KDC may issue. Encoded rather than
+	// decoded because the ticket's field is opaque DER, and nil
+	// when there is none, so that the [10] element is omitted
+	// instead of appearing empty.
+	authData asn1.RawValue
 
 	// stkt is the request's second ticket, decrypted, and stktSrv
 	// the principal it names. Both are nil unless the options
@@ -108,6 +117,9 @@ func (k *KDC) TGS(
 	}
 	k.tgsTimes(s)
 	if code, status := k.tgsSessionKey(s); code != 0 {
+		return nil, k.fastError(s, code, status, &cname)
+	}
+	if code, status := k.setAuthData(s); code != 0 {
 		return nil, k.fastError(s, code, status, &cname)
 	}
 	rep, err := k.tgsAssemble(s)

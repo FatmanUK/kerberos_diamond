@@ -26,6 +26,22 @@ const (
 	// strengthened from it).
 	UsageASRepEncPart Usage = 3
 
+	// UsageTGSReqAuthDataSession and UsageTGSReqAuthDataSubkey
+	// decrypt a TGS-REQ's enc-authorization-data
+	// (krb5.hin:947-948).
+	//
+	// **Which one applies is decided by trying, not by looking.**
+	// RFC 4120 says the subkey at usage 5 when a subkey is
+	// present and the session key at usage 4 when it is not --
+	// but krb5 before 1.7 always used the session key and usage
+	// 4, so upstream tries that first and falls back to the
+	// correct way (copy_request_authdata,
+	// kdc/kdc_authdata.c:252-266, with a comment calling it
+	// conservatism). A KDC that tried only the correct way would
+	// refuse requests a stock KDC accepts.
+	UsageTGSReqAuthDataSession Usage = 4
+	UsageTGSReqAuthDataSubkey  Usage = 5
+
 	// UsageTGSReqAuthCksum keys the authenticator's checksum over
 	// the TGS-REQ body, and UsageTGSReqAuth encrypts the
 	// authenticator itself -- both under the TGT's session key.
