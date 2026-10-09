@@ -1,7 +1,12 @@
 package kdc
 
 import (
+	"context"
+	"errors"
+
+	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/spnego"
+	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
 
@@ -36,8 +41,13 @@ type Negotiated struct {
 // framed directly under the Kerberos OID, and the same token wrapped
 // in a SPNEGO NegTokenInit. Upstream reaches both through the same
 // gss_accept_sec_context by dispatching on the OID in the framing,
-// and so does this.
+// and so does this. A context is taken rather than made because this
+// one has a caller that has one -- an HTTP request -- where the KDC's
+// own exchanges are driven by Handle and make their own. The replay
+// check reaches the database, so a cancelled request should stop
+// there too.
 func (k *KDC) AcceptNegotiate(
+	ctx context.Context,
 	token []byte,
 ) (*Negotiated, *wire.KRBError) {
 	oid, _, err := spnego.ParseFramed(token)
@@ -46,14 +56,15 @@ func (k *KDC) AcceptNegotiate(
 			"GSS TOKEN FRAMING", nil)
 	}
 	if oid.Equal(spnego.MechSPNEGO) {
-		return k.acceptSPNEGO(token)
+		return k.acceptSPNEGO(ctx, token)
 	}
-	return k.acceptMechToken(token, nil)
+	return k.acceptMechToken(ctx, token, nil)
 }
 
 // acceptSPNEGO unwraps a NegTokenInit and answers with a
 // NegTokenResp.
 func (k *KDC) acceptSPNEGO(
+	ctx context.Context,
 	token []byte,
 ) (*Negotiated, *wire.KRBError) {
 	init, err := spnego.UnmarshalNegTokenInit(token)
@@ -73,7 +84,7 @@ func (k *KDC) acceptSPNEGO(
 		return nil, k.krbError(wire.ErrCodePreauthRequired,
 			"SPNEGO NO MECH TOKEN", nil)
 	}
-	n, kerr := k.acceptMechToken(init.MechToken, mech)
+	n, kerr := k.acceptMechToken(ctx, init.MechToken, mech)
 	if kerr != nil {
 		return nil, kerr
 	}
@@ -114,6 +125,7 @@ func (k *KDC) negRefusal(s spnego.NegState) *wire.KRBError {
 // OID the SPNEGO negotiation settled on, or nil when the token was
 // framed directly and the OID in the framing is the answer.
 func (k *KDC) acceptMechToken(
+	ctx context.Context,
 	token []byte,
 	mech spnego.OID,
 ) (*Negotiated, *wire.KRBError) {
@@ -129,6 +141,9 @@ func (k *KDC) acceptMechToken(
 	if kerr != nil {
 		return nil, kerr
 	}
+	if kerr := k.refuseReplay(ctx, der); kerr != nil {
+		return nil, kerr
+	}
 	flags, kerr := k.contextFlags(id)
 	if kerr != nil {
 		return nil, kerr
@@ -141,4 +156,78 @@ func (k *KDC) acceptMechToken(
 		return nil, kerr
 	}
 	return n, nil
+}
+
+// refuseReplay records this AP-REQ's authenticator and refuses one
+// already seen.
+//
+// **Upstream's two administrative surfaces differ here, and the
+// difference is deliberate on both sides.** The GSS acceptor keeps a
+// replay cache: `krb5_get_server_rcache` opens one when the
+// credential is acquired (`acquire_cred.c:218`), it goes on the auth
+// context at `accept_sec_context.c:808-811`, and `k5_rc_store` runs
+// inside `krb5_rd_req` (`rd_req_dec.c:620-625`). The password-change
+// service turns it off: `schpw.c:110-111` sets the auth context's
+// flags to `DO_SEQUENCE` alone, which *clears* `DO_TIME`, and
+// `rd_req_dec.c:543-548` then creates no cache and stores nothing.
+//
+// So the line is drawn by what a replay would do. Replaying a
+// password change sets the same password again; replaying an
+// administrative request re-runs it, and `cpw -randkey` or `delprinc`
+// re-run is not harmless. This is the GSS path, so it gets the cache,
+// and internal/kdc/chpw.go does not -- which is upstream's split
+// exactly.
+//
+// TLS is not the answer to this and it is worth saying why: it
+// protects a live connection and says nothing about a POST recorded
+// at one end and sent again later.
+func (k *KDC) refuseReplay(
+	ctx context.Context,
+	der []byte,
+) *wire.KRBError {
+	tag, err := replayTag(der)
+	if err != nil {
+		return k.krbError(wire.ErrCodeModified,
+			"GSS REPLAY TAG", nil)
+	}
+	err = k.Store.RecordAuthenticator(ctx, tag, k.now(),
+		k.skew())
+	switch {
+	case errors.Is(err, store.ErrReplay):
+		return k.krbError(wire.ErrCodeRepeat,
+			"GSS AUTHENTICATOR REPLAYED", nil)
+	case err != nil:
+		return k.krbError(wire.ErrCodeGeneric,
+			"RECORD GSS AUTHENTICATOR", nil)
+	}
+	return nil
+}
+
+// replayTag is k5_rc_tag_from_ciphertext
+// (lib/krb5/rcache/rc_base.c:109-126): the last octets of the
+// authenticator's ciphertext, as many as that enctype's checksum is
+// long.
+//
+// It is the integrity tag, which is the one part of the message a
+// sender could not have produced without the key -- so it is unique
+// per authenticator without this code having to decrypt anything or
+// hash anything, and two authenticators collide only if their tags
+// do. Deriving it from the client name and timestamp instead would
+// collide for a client that legitimately sent two requests in the
+// same microsecond.
+func replayTag(der []byte) ([]byte, error) {
+	ap, err := wire.UnmarshalAPReq(der)
+	if err != nil {
+		return nil, err
+	}
+	p, err := crypto.Profile(
+		crypto.EncType(ap.Authenticator.EType))
+	if err != nil {
+		return nil, err
+	}
+	ct := ap.Authenticator.Cipher
+	if len(ct) < p.TrailerLength || p.TrailerLength == 0 {
+		return nil, errors.New("kdc: short authenticator")
+	}
+	return ct[len(ct)-p.TrailerLength:], nil
 }

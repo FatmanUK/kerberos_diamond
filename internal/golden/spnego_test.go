@@ -117,7 +117,8 @@ func gssStep(
 	case flags&tokContextNext != 0:
 		return false
 	case flags&tokContext != 0:
-		n, kerr := k.AcceptNegotiate(body)
+		n, kerr := k.AcceptNegotiate(
+			context.Background(), body)
 		if kerr != nil {
 			r.Err = fmt.Errorf("accepting: %v", kerr)
 			return true

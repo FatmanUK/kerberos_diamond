@@ -1,6 +1,7 @@
 package kdc
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -86,8 +87,8 @@ func TestAcceptNegotiateSPNEGO(t *testing.T) {
 	der := gssAPReq(t, tkt, session,
 		gssCksum(spnego.FlagMutual|spnego.FlagInteg),
 		wire.APOptMutualRequired)
-	n, kerr := k.AcceptNegotiate(negTokenInit(
-		[]spnego.OID{spnego.MechKrb5}, der))
+	n, kerr := k.AcceptNegotiate(context.Background(),
+		negTokenInit([]spnego.OID{spnego.MechKrb5}, der))
 	if kerr != nil {
 		t.Fatalf("refused: %v", kerr.ErrorCode)
 	}
@@ -146,8 +147,8 @@ func TestTheAcceptorSubkeyIsNotTheClients(t *testing.T) {
 	tkt, session := adminTicketFromTGT(t, k, "admin")
 	der := gssAPReq(t, tkt, session,
 		gssCksum(spnego.FlagMutual), wire.APOptMutualRequired)
-	n, kerr := k.AcceptNegotiate(negTokenInit(
-		[]spnego.OID{spnego.MechKrb5}, der))
+	n, kerr := k.AcceptNegotiate(context.Background(),
+		negTokenInit([]spnego.OID{spnego.MechKrb5}, der))
 	if kerr != nil {
 		t.Fatalf("refused: %v", kerr.ErrorCode)
 	}
@@ -177,7 +178,7 @@ func TestAcceptNegotiateBareMechToken(t *testing.T) {
 		TokID: spnego.TokIDAPReq,
 		Body:  der,
 	}.Marshal()
-	n, kerr := k.AcceptNegotiate(tok)
+	n, kerr := k.AcceptNegotiate(context.Background(), tok)
 	if kerr != nil {
 		t.Fatalf("refused: %v", kerr.ErrorCode)
 	}
@@ -256,8 +257,8 @@ func acceptShape(
 	}
 	der := gssAPReq(t, tkt, session, c.cksum(t, session),
 		opts)
-	n, kerr := k.AcceptNegotiate(negTokenInit(
-		[]spnego.OID{spnego.MechKrb5}, der))
+	n, kerr := k.AcceptNegotiate(context.Background(),
+		negTokenInit([]spnego.OID{spnego.MechKrb5}, der))
 	if kerr != nil {
 		t.Fatalf("refused: %v", kerr.ErrorCode)
 	}
@@ -346,7 +347,9 @@ func TestAcceptNegotiateRefusals(t *testing.T) {
 	k := testKDC(t)
 	for _, c := range negRefusals() {
 		t.Run(c.why, func(t *testing.T) {
-			_, kerr := k.AcceptNegotiate(c.token(t, k))
+			_, kerr := k.AcceptNegotiate(
+				context.Background(),
+				c.token(t, k))
 			if kerr == nil {
 				t.Fatal("accepted")
 			}
@@ -415,5 +418,55 @@ func TestAnAbsentStartTimeMeansTheAuthTime(t *testing.T) {
 	code, _ := k.validateTicketTimes(tkt, "T")
 	if code != wire.ErrCodeTktNYV {
 		t.Errorf("code %d, want TKT_NYV", code)
+	}
+}
+
+// The same token twice is refused the second time, which is what a
+// replay cache is for and what TLS does not provide: a POST recorded
+// at one end and sent again later arrives over a perfectly good new
+// connection.
+func TestAnAuthenticatorIsRefusedTwice(t *testing.T) {
+	k := testKDC(t)
+	tkt, session := adminTicketFromTGT(t, k, "admin")
+	der := gssAPReq(t, tkt, session,
+		gssCksum(spnego.FlagMutual), wire.APOptMutualRequired)
+	tok := negTokenInit([]spnego.OID{spnego.MechKrb5}, der)
+	ctx := context.Background()
+	if _, kerr := k.AcceptNegotiate(ctx, tok); kerr != nil {
+		t.Fatalf("the first attempt failed: %v",
+			kerr.ErrorCode)
+	}
+	_, kerr := k.AcceptNegotiate(ctx, tok)
+	if kerr == nil {
+		t.Fatal("the replay was accepted")
+	}
+	if kerr.ErrorCode != wire.ErrCodeRepeat {
+		t.Errorf("code %d, want AP_ERR_REPEAT",
+			kerr.ErrorCode)
+	}
+}
+
+// The tag is the authenticator's own integrity tag, so two requests a
+// client makes in the same microsecond are distinct and neither looks
+// like a replay of the other.
+//
+// A tag derived from the client name and timestamp would collide for
+// exactly that pair, and the failure would be a legitimate request
+// refused rather than an illegitimate one accepted -- which is the
+// harder kind to notice.
+func TestTwoRequestsAtOnceAreNotReplays(t *testing.T) {
+	k := testKDC(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		tkt, session := adminTicketFromTGT(t, k, "admin")
+		der := gssAPReq(t, tkt, session,
+			gssCksum(spnego.FlagMutual),
+			wire.APOptMutualRequired)
+		_, kerr := k.AcceptNegotiate(ctx, negTokenInit(
+			[]spnego.OID{spnego.MechKrb5}, der))
+		if kerr != nil {
+			t.Fatalf("attempt %d refused: %v", i,
+				kerr.ErrorCode)
+		}
 	}
 }
