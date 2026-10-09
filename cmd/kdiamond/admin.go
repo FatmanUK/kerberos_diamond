@@ -195,16 +195,8 @@ func setLifetimes(
 
 // modprinc changes a principal's attributes and lifetimes.
 func modprinc(args []string) error {
-	fs := flag.NewFlagSet("modprinc", flag.ContinueOnError)
-	maxLife := fs.Duration("maxlife", 0, "maximum ticket life")
-	maxRenew := fs.Duration("maxrenewlife", 0,
-		"maximum renewable life")
-	attrs := attrFlag(fs)
-	policy := fs.String("policy", "",
-		"the password policy this principal follows")
-	clearPolicy := fs.Bool("clearpolicy", false,
-		"stop following any policy")
-	if err := fs.Parse(args); err != nil {
+	f := newModFlags()
+	if err := f.fs.Parse(args); err != nil {
 		return err
 	}
 	s, c, err := openStore()
@@ -212,7 +204,7 @@ func modprinc(args []string) error {
 		return err
 	}
 	defer s.Close()
-	name, err := principalArg(fs, c.Realm)
+	name, err := principalArg(f.fs, c.Realm)
 	if err != nil {
 		return err
 	}
@@ -221,16 +213,62 @@ func modprinc(args []string) error {
 	if err != nil {
 		return err
 	}
-	err = modifyPrincipal(ctx, s, p, *attrs, *policy,
-		*clearPolicy, *maxLife, *maxRenew)
-	if err != nil {
+	if err := f.apply(ctx, s, p); err != nil {
 		return err
 	}
 	if err := s.Save(ctx, p); err != nil {
 		return err
 	}
+	// The unlock comes after the save, because it writes only the
+	// three lockout counters: before it, Save would write the
+	// stale ones straight back over it.
+	if *f.unlock {
+		if err := s.Unlock(ctx, p); err != nil {
+			return err
+		}
+	}
 	fmt.Printf("Principal %q modified.\n", name)
 	return nil
+}
+
+// modFlags is everything modprinc takes.
+type modFlags struct {
+	fs *flag.FlagSet
+
+	maxLife     *time.Duration
+	maxRenew    *time.Duration
+	attrs       *attrList
+	policy      *string
+	clearPolicy *bool
+	unlock      *bool
+}
+
+func newModFlags() *modFlags {
+	fs := flag.NewFlagSet("modprinc", flag.ContinueOnError)
+	return &modFlags{
+		fs: fs,
+		maxLife: fs.Duration("maxlife", 0,
+			"maximum ticket life"),
+		maxRenew: fs.Duration("maxrenewlife", 0,
+			"maximum renewable life"),
+		attrs: attrFlag(fs),
+		policy: fs.String("policy", "",
+			"the password policy this principal follows"),
+		clearPolicy: fs.Bool("clearpolicy", false,
+			"stop following any policy"),
+		unlock: fs.Bool("unlock", false,
+			"clear a lockout's failure count"),
+	}
+}
+
+// apply is everything but the unlock, which has to wait for the save.
+func (f *modFlags) apply(
+	ctx context.Context,
+	s *store.Store,
+	p *store.Principal,
+) error {
+	return modifyPrincipal(ctx, s, p, *f.attrs, *f.policy,
+		*f.clearPolicy, *f.maxLife, *f.maxRenew)
 }
 
 // modifyPrincipal applies everything modprinc can change.

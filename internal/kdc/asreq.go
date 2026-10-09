@@ -114,12 +114,17 @@ func (k *KDC) AS(
 	if code != 0 {
 		return nil, k.fastErrorAS(s, code, status)
 	}
+	if code, status := k.lockedOut(s); code != 0 {
+		return nil, k.fastErrorAS(s, code, status)
+	}
 	if code, status := k.keys(s); code != 0 {
 		return nil, k.fastErrorAS(s, code, status)
 	}
 	if e := k.preauth(s); e != nil {
+		k.audit(s, store.FailedPreauth)
 		return nil, k.wrapErr(s.fast, e, s.req.Body.Nonce)
 	}
+	k.audit(s, store.Succeeded)
 	k.times(s)
 	if err := k.sessionKey(s); err != nil {
 		return nil, k.fastErrorAS(s, wire.ErrCodeGeneric,
@@ -400,4 +405,41 @@ func randomKey(e crypto.EncType) ([]byte, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+// lockedOut refuses a principal whose failure count has reached its
+// policy's maximum (krb5_db2_lockout_check_policy,
+// plugins/kdb/db2/lockout.c:116-139).
+//
+// The code is KDC_ERR_CLIENT_REVOKED, which is what a locked-out
+// account gets and is the same code DISALLOW_ALL_TIX gets: from the
+// client's side being locked out and being disabled look alike, and
+// upstream makes no attempt to distinguish them.
+func (k *KDC) lockedOut(s *asState) (int32, string) {
+	out, err := k.Store.LockoutFor(context.Background(),
+		s.client, k.now())
+	if err != nil {
+		return wire.ErrCodeGeneric, "LOCKOUT_POLICY"
+	}
+	if out.Locked {
+		return wire.ErrCodeClientRevoked, "CLIENT LOCKED OUT"
+	}
+	return 0, ""
+}
+
+// audit records what an exchange said about the client, which is what
+// the lockout counters are made of.
+//
+// A failure to *write* the counter is deliberately not a failure of
+// the exchange. Refusing a correct authentication because a counter
+// could not be incremented would turn a database hiccup into an
+// outage, and refusing to report a failed one changes nothing the
+// client sees. Upstream's audit hook returns a code its caller
+// ignores for the same reason.
+func (k *KDC) audit(s *asState, outcome store.Outcome) {
+	if s.client == nil {
+		return
+	}
+	_ = k.Store.RecordOutcome(context.Background(), s.client,
+		outcome, k.now())
 }

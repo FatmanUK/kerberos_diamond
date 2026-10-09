@@ -41,7 +41,7 @@ principal administration, standing in for kadmin:
   kdiamond addprinc -pw PW [-kvno N] [-maxlife D]
                     [-maxrenewlife D] [-attr SPEC] PRINC
   kdiamond modprinc [-maxlife D] [-maxrenewlife D]
-                    [-attr SPEC] [-policy NAME] PRINC
+                    [-attr SPEC] [-policy NAME] [-unlock] PRINC
   kdiamond renprinc OLD NEW       rename a principal
   kdiamond cpw -pw PW PRINC       change a password, bumping the kvno
   kdiamond delprinc PRINC         remove a principal

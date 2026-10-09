@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
 
@@ -285,5 +286,101 @@ func TestNoPWSalt(t *testing.T) {
 		if p.Type == wire.PAPWSalt {
 			t.Error("reply carries PA-PW-SALT")
 		}
+	}
+}
+
+// A locked-out principal is refused before its password is even
+// looked at, and with CLIENT_REVOKED rather than a preauth failure:
+// the two are different codes because a client acts on them
+// differently, and telling a locked-out user "wrong password" sends
+// them to try again and lock themselves out further.
+//
+// The counting is what makes it work, so this drives real failures
+// rather than setting the counter by hand.
+func TestLockoutRefusesAfterEnoughFailures(t *testing.T) {
+	k := testKDC(t)
+	salt, e := hintSalt(t, k)
+	lockPreauthPrincipal(t, k, 2)
+
+	for i := 0; i < 2; i++ {
+		req := asRequest([]string{"preauth"})
+		req.PAData = []wire.PAData{
+			encTimestamp(t, k, salt+"wrong", e, fixedNow),
+		}
+		_, kerr := as(t, k, req)
+		if kerr == nil {
+			t.Fatal("a wrong password was accepted")
+		}
+		if kerr.ErrorCode != wire.ErrCodePreauthFailed {
+			t.Fatalf("attempt %d: code %d", i,
+				kerr.ErrorCode)
+		}
+	}
+	// And now the *right* password is refused, which is the only
+	// observable difference between a wrong password and a
+	// lockout.
+	req := asRequest([]string{"preauth"})
+	req.PAData = []wire.PAData{
+		encTimestamp(t, k, salt, e, fixedNow),
+	}
+	_, kerr := as(t, k, req)
+	if kerr == nil {
+		t.Fatal("the right password still worked")
+	}
+	if kerr.ErrorCode != wire.ErrCodeClientRevoked {
+		t.Errorf("code %d, want CLIENT_REVOKED",
+			kerr.ErrorCode)
+	}
+}
+
+// A correct password resets the count, so a user who mistypes once
+// and then succeeds is not one step closer to being locked out.
+func TestASuccessClearsTheFailureCount(t *testing.T) {
+	k := testKDC(t)
+	salt, e := hintSalt(t, k)
+	lockPreauthPrincipal(t, k, 3)
+
+	req := asRequest([]string{"preauth"})
+	req.PAData = []wire.PAData{
+		encTimestamp(t, k, salt+"wrong", e, fixedNow),
+	}
+	if _, kerr := as(t, k, req); kerr == nil {
+		t.Fatal("a wrong password was accepted")
+	}
+	req = asRequest([]string{"preauth"})
+	req.PAData = []wire.PAData{
+		encTimestamp(t, k, salt, e, fixedNow),
+	}
+	if _, kerr := as(t, k, req); kerr != nil {
+		t.Fatalf("the right password was refused: %v", kerr)
+	}
+	p, err := k.Store.Lookup(ctxFor(t), "preauth@"+testRealm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.FailAuthCount != 0 {
+		t.Errorf("count is %d after a success",
+			p.FailAuthCount)
+	}
+}
+
+// lockPreauthPrincipal gives the preauth principal a lockout policy.
+func lockPreauthPrincipal(
+	t *testing.T, k *KDC, maxFail int32,
+) {
+	t.Helper()
+	ctx := ctxFor(t)
+	pol := store.NewPolicy("locking")
+	pol.PWMaxFail = maxFail
+	if err := k.Store.SavePolicy(ctx, pol); err != nil {
+		t.Fatal(err)
+	}
+	p, err := k.Store.Lookup(ctx, "preauth@"+testRealm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Policy = "locking"
+	if err := k.Store.Save(ctx, p); err != nil {
+		t.Fatal(err)
 	}
 }

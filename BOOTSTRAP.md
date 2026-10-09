@@ -498,12 +498,29 @@ are not "fixed" back by accident.
 **Crash-only and high availability:**
 
 - **The KDC holds nothing a restart would have to rebuild**, and that is
-  measured rather than asserted. Every principal and key is in Postgres, the
-  master key is derived from the environment, and an exchange carries no state
-  past its reply — no replay cache, no session table, nothing written. So
-  several KDCs can serve one realm behind one address, and `make golden`
-  issues a TGT at one and spends it at another sharing nothing but the
-  database.
+  measured rather than asserted. Every principal and key is in Postgres and
+  the master key is derived from the environment, so several KDCs can serve
+  one realm behind one address, and `make golden` issues a TGT at one and
+  spends it at another sharing nothing but the database.
+- **An exchange writes nothing — unless a lockout policy is in force**, and
+  that exception is worth stating because the original claim was stronger.
+  There is still no replay cache and no session table; what changed is that
+  counting failed authentications means writing one, and a counter nobody
+  writes is not a lockout. The write is narrowed to the case that asked for
+  it: with no policy setting `pw_max_fail`, nothing is written at all. That
+  is a deliberate divergence — upstream writes `last_success` on *every*
+  authenticated exchange, gated only by a `disable_last_success` option that
+  exists precisely because the write is expensive
+  (`plugins/kdb/db2/lockout.c:180-184`).
+- **And the lockout counter is where the architecture pays.** Upstream has to
+  replicate `fail_auth_count` between KDCs as an incremental-propagation
+  delta (`lib/kdb/kdb_convert.c:76`), which is a known pain point: a counter
+  that lags is a lockout that does not work. Several KDCs over one Postgres
+  share it for free. The same goes for the administrative unlock, which
+  upstream records as tl-data and consults on the next failure so that a
+  replica with a stale counter still honours it (`lockout.c:88-91`) — with
+  one database there is no stale copy, so zeroing the counter is the whole of
+  it.
 - **There is one stopping path and it is abrupt.** A signal calls
   `Server.Close`, not `Shutdown`: nothing needs draining, so a connection cut
   mid-flight costs a client one retry and costs the KDC nothing. Draining
