@@ -35,6 +35,8 @@ func ktadd(args []string) error {
 	file := fs.String("k", "", "the keytab file to write")
 	norandkey := fs.Bool("norandkey", false,
 		"extract the current keys instead of new ones")
+	keepOld := fs.Bool("keepold", false,
+		"keep the previous key version as well")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -50,14 +52,15 @@ func ktadd(args []string) error {
 	if err != nil {
 		return err
 	}
-	return addToKeytab(s, *file, name, *norandkey)
+	return addToKeytab(s, *file, name, *norandkey,
+		*keepOld)
 }
 
 // addToKeytab does the work: re-key unless told not to, then append.
 func addToKeytab(
 	s *store.Store,
 	file, name string,
-	norandkey bool,
+	norandkey, keepOld bool,
 ) error {
 	ctx := context.Background()
 	p, err := s.Lookup(ctx, name)
@@ -66,7 +69,12 @@ func addToKeytab(
 	}
 	if !norandkey {
 		kvno := p.HighestKVNO() + 1
-		err = p.SetRandomKey(s.MasterKey(), kvno)
+		mkey := s.MasterKey()
+		if keepOld {
+			err = p.SetRandomKeyKeepOld(mkey, kvno)
+		} else {
+			err = p.SetRandomKey(mkey, kvno)
+		}
 		if err != nil {
 			return err
 		}
@@ -189,4 +197,43 @@ func appendKeytab(file string, add []keytab.Entry) error {
 		return err
 	}
 	return os.Rename(tmp, file)
+}
+
+// purgekeys drops every key version below the current one, which is
+// kadmin's purgekeys.
+//
+// It is the other half of keepold: a previous version is kept so that
+// tickets already issued under it keep verifying, and removed once
+// none can still be in use -- which is a judgement about ticket
+// lifetimes and so an operator's to make, not the KDC's.
+func purgekeys(args []string) error {
+	fs := flag.NewFlagSet("purgekeys", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	s, c, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	name, err := principalArg(fs, c.Realm)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	p, err := s.Lookup(ctx, name)
+	if err != nil {
+		return err
+	}
+	removed := p.PurgeOldKeys()
+	if removed == 0 {
+		fmt.Printf("%q has only its current keys.\n", name)
+		return nil
+	}
+	if err := s.Save(ctx, p); err != nil {
+		return err
+	}
+	fmt.Printf("Removed %d old key(s) from %q, leaving key "+
+		"version %d.\n", removed, name, p.HighestKVNO())
+	return nil
 }

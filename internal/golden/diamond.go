@@ -183,13 +183,12 @@ func realmEntries() []fixtureEntry {
 		{ServiceName, ServicePassword, 1, 0},
 		{[]string{PeerName}, PeerPassword, 1,
 			store.AttrDisallowSvr},
-		// PWCHANGE_SERVICE is what exempts a principal
-		// whose password has expired from needing a valid
-		// one to get a ticket here -- without it there
-		// would be no way to change an expired password,
-		// which is the condition the whole service exists
-		// for. kdb5_util create sets it on this principal
-		// and so does this.
+		// PWCHANGE_SERVICE is what exempts a principal whose
+		// password has expired from needing a valid one to
+		// get a ticket here -- without it there would be no
+		// way to change an expired password, which is the
+		// condition the whole service exists for. kdb5_util
+		// create sets it on this principal and so does this.
 		{ChangePWName, ChangePWPassword, 1,
 			store.AttrPWChangeService},
 	}

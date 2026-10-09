@@ -281,3 +281,89 @@ func attachPolicy(
 		t.Fatal(err)
 	}
 }
+
+// TestStockKpasswdRefusesAReusedPassword is password history end to
+// end, and the message is what a user sees: "Cannot reuse password",
+// which is upstream's own wording for the condition
+// (tests/t_policy.py:108-109 asserts it).
+//
+// The comparison is of key material rather than of passwords, which
+// is the only way it can work -- nothing stored is reversible. That
+// also makes it exact: a password that derives the same key under the
+// same salt is the same password.
+func TestStockKpasswdRefusesAReusedPassword(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 60*time.Second)
+	defer cancel()
+
+	env := pointAtDiamondWith(t, ctx, o, "history",
+		changePWConf)
+	attachHistory(t, ctx, 2)
+
+	// The current password cannot be set again, which is what a
+	// history of one would already give.
+	out, err := o.ExecEnv(ctx, env,
+		UserPassword+"\n"+UserPassword+"\n"+UserPassword+
+			"\n", "kpasswd", UserName+"@"+Realm)
+	if err == nil {
+		t.Errorf("the same password was accepted:\n%s", out)
+	}
+	// Change it twice, and the first one is still remembered -- a
+	// history of two being the current password and the one
+	// before it.
+	first, second := "first-replacement", "second-replacement"
+	changePassword(t, ctx, o, env, UserPassword, first)
+	changePassword(t, ctx, o, env, first, second)
+
+	out, err = o.ExecEnv(ctx, env,
+		second+"\n"+first+"\n"+first+"\n", "kpasswd",
+		UserName+"@"+Realm)
+	if err == nil {
+		t.Errorf("a remembered password was accepted:\n%s",
+			out)
+	}
+	// And the one before that has been forgotten, so it may come
+	// back round.
+	changePassword(t, ctx, o, env, second, UserPassword)
+}
+
+// changePassword runs a stock kpasswd and insists it worked.
+func changePassword(
+	t *testing.T,
+	ctx context.Context,
+	o *Oracle,
+	env []string,
+	old, new string,
+) {
+	t.Helper()
+	in := old + "\n" + new + "\n" + new + "\n"
+	out, err := o.ExecEnv(ctx, env, in, "kpasswd",
+		UserName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("changing to %q failed: %v\n%s",
+			new, err, out)
+	}
+}
+
+// attachHistory creates a policy that remembers that many passwords
+// and points the user at it.
+func attachHistory(
+	t *testing.T, ctx context.Context, keep int32,
+) {
+	t.Helper()
+	d := diamondOf(t)
+	pol := store.NewPolicy("remembering")
+	pol.PWHistoryNum = keep
+	if err := d.Store.SavePolicy(ctx, pol); err != nil {
+		t.Fatal(err)
+	}
+	p, err := d.Store.Lookup(ctx, UserName+"@"+Realm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Policy = "remembering"
+	if err := d.Store.Save(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+}

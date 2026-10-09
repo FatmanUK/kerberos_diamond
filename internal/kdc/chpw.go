@@ -192,14 +192,21 @@ func (k *KDC) storePassword(
 	p *store.Principal,
 	password string,
 ) (uint16, string) {
-	// The key version goes up by one, which is what makes a
-	// ticket already issued under the old key still verifiable
-	// until it expires -- except that SetPassword replaces the
-	// whole key list rather than keeping the old version, so in
-	// fact it does not. That is the keepold gap, recorded here
-	// because this is the first place it bites.
+	// The history entry is built from the keys that are about to
+	// be replaced, so it is written first -- the one ordering
+	// constraint here, and the one upstream comments on
+	// (svr_principal.c:1270-1271).
+	err := k.Store.RecordPasswordHistory(ctx, p)
+	if err != nil {
+		return wire.KPasswdHardError, "Failed storing history"
+	}
+	// The key version goes up by one. Note that this replaces the
+	// whole key list rather than keeping the old version, so a
+	// ticket already issued under the old key stops verifying at
+	// once -- which is what keepold exists to avoid, and which a
+	// self-service password change has no way to ask for.
 	kvno := p.HighestKVNO() + 1
-	err := p.SetPassword(k.Store.MasterKey(), password, kvno)
+	err = p.SetPassword(k.Store.MasterKey(), password, kvno)
 	if err != nil {
 		return wire.KPasswdHardError, "Failed deriving keys"
 	}
@@ -209,14 +216,9 @@ func (k *KDC) storePassword(
 	}
 	p.LastPWChange = k.now()
 	// And the bit that demanded the change is cleared, which
-	// upstream does in the same place (svr_principal.c:1298).
-	//
-	// Leaving it set is invisible from here and fatal from the
-	// client's side: kinit notices the expiry, gets a ticket for
-	// this service because the policy excuses it, changes the
-	// password successfully, retries the login -- and is told the
-	// password has expired again, because it has. A stock kinit
-	// is what found it.
+	// upstream does in the same place (svr_principal.c:1298). A
+	// stock kinit found this one: it changed the password and
+	// retried the login, and was told the password had expired.
 	p.Attributes &^= store.AttrRequiresPWChange
 	if err := k.Store.Save(ctx, p); err != nil {
 		return wire.KPasswdHardError, "Failed storing keys"
@@ -465,6 +467,13 @@ func (k *KDC) checkPolicy(
 	}
 	if err != nil {
 		return wire.KPasswdHardError, "Policy unavailable"
+	}
+	err = k.Store.CheckPasswordReuse(ctx, p, password)
+	if errors.Is(err, store.ErrPasswordReuse) {
+		return wire.KPasswdSoftError, err.Error()
+	}
+	if err != nil {
+		return wire.KPasswdHardError, "History unavailable"
 	}
 	return wire.KPasswdSuccess, ""
 }

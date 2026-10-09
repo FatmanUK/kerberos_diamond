@@ -257,6 +257,8 @@ func modifyPrincipal(
 func cpw(args []string) error {
 	fs := flag.NewFlagSet("cpw", flag.ContinueOnError)
 	pw := fs.String("pw", "", "the new password")
+	keepOld := fs.Bool("keepold", false,
+		"keep the previous key version as well")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -277,7 +279,7 @@ func cpw(args []string) error {
 	if err != nil {
 		return err
 	}
-	kvno, err := changePassword(ctx, s, p, *pw)
+	kvno, err := changePassword(ctx, s, p, *pw, *keepOld)
 	if err != nil {
 		return err
 	}
@@ -304,16 +306,34 @@ func changePassword(
 	s *store.Store,
 	p *store.Principal,
 	pw string,
+	keepOld bool,
 ) (int32, error) {
 	if err := s.CheckPassword(ctx, p, pw); err != nil {
 		return 0, err
 	}
-	kvno := p.HighestKVNO() + 1
-	if err := p.SetPassword(s.MasterKey(), pw, kvno); err != nil {
+	if err := s.CheckPasswordReuse(ctx, p, pw); err != nil {
 		return 0, err
 	}
-	err := s.SetPasswordExpiry(ctx, p, time.Now())
+	// The history entry is built from the keys that are about to
+	// be replaced, so it has to be written first -- which is the
+	// one ordering constraint here and the one upstream puts a
+	// comment on (svr_principal.c:1270-1271).
+	if err := s.RecordPasswordHistory(ctx, p); err != nil {
+		return 0, err
+	}
+	kvno := p.HighestKVNO() + 1
+	mkey := s.MasterKey()
+	var err error
+	if keepOld {
+		err = p.SetPasswordKeepOld(mkey, pw, kvno)
+	} else {
+		err = p.SetPassword(mkey, pw, kvno)
+	}
 	if err != nil {
+		return 0, err
+	}
+	if err := s.SetPasswordExpiry(ctx, p,
+		time.Now()); err != nil {
 		return 0, err
 	}
 	// And the bit that demanded a change is cleared, as it is on

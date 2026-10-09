@@ -46,8 +46,9 @@ principal administration, standing in for kadmin:
   kdiamond delprinc PRINC         remove a principal
   kdiamond getprinc PRINC         print what the KDC knows
   kdiamond listprincs             print every principal's name
-  kdiamond ktadd -k FILE [-norandkey] PRINC
+  kdiamond ktadd -k FILE [-norandkey] [-keepold] PRINC
                                   write keys into a keytab
+  kdiamond purgekeys PRINC        drop every key below the current
 `, version)
 	usagePolicies()
 }
@@ -59,7 +60,9 @@ func usagePolicies() {
 ktadd re-keys the principal unless -norandkey is given, because a
 keytab is a copy of a secret and handing one out without changing the
 key would leave every previous copy working. That is kadmin's
-behaviour too.
+behaviour too. -keepold on it or on cpw keeps the previous version as
+well, so that tickets already issued under it go on verifying until
+they expire; purgekeys removes it afterwards.
 
 password policies, also kadmin's:
   kdiamond addpol [-minlife D] [-maxlife D] [-minlength N]
@@ -129,6 +132,7 @@ func adminCommand(cmd string) func([]string) error {
 		"getprinc":        getprinc,
 		"listprincs":      listprincs,
 		"ktadd":           ktadd,
+		"purgekeys":       purgekeys,
 		"xst":             ktadd,
 		"addpol":          addpol,
 		"modpol":          modpol,

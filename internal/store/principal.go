@@ -124,6 +124,7 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 	db := s.db.WithContext(ctx)
 	for _, m := range []any{
 		&Key{}, &StringAttr{}, &TLDatum{},
+		&HistoryKey{},
 	} {
 		err := db.Where("principal_name = ?", name).
 			Delete(m).Error
@@ -152,14 +153,57 @@ func (p *Principal) SetPassword(
 	password string,
 	kvno int32,
 ) error {
+	return p.setPassword(mkey, password, kvno, false)
+}
+
+// SetPasswordKeepOld is SetPassword that keeps the previous key
+// versions, which is kadmin's cpw -keepold.
+//
+// It exists because replacing a key locks out every ticket already
+// issued under it. A service re-keyed without keepold stops accepting
+// the tickets its clients are holding, which they only find out when
+// they present one; keeping the old version means they keep working
+// until they expire, and then purgekeys removes it.
+//
+// The new keys go *first* in the list, because SelectKey breaks out
+// of its scan on the first row below the version it wants and so
+// requires descending order.
+func (p *Principal) SetPasswordKeepOld(
+	mkey MasterKey,
+	password string,
+	kvno int32,
+) error {
+	return p.setPassword(mkey, password, kvno, true)
+}
+
+func (p *Principal) setPassword(
+	mkey MasterKey,
+	password string,
+	kvno int32,
+	keep bool,
+) error {
 	components, realm, err := ParseName(p.Name)
 	if err != nil {
 		return err
 	}
 	salt := crypto.Salt(realm, components)
+	return p.setKeys(kvno, keep,
+		func(e crypto.EncType) (Key, error) {
+			return newKey(mkey, password, salt, e)
+		})
+}
+
+// setKeys writes one key per supported enctype at a single version,
+// keeping or discarding what was there.
+func (p *Principal) setKeys(
+	kvno int32,
+	keep bool,
+	makeKey func(crypto.EncType) (Key, error),
+) error {
+	old := p.Keys
 	p.Keys = nil
 	for i, e := range crypto.Supported() {
-		k, err := newKey(mkey, password, salt, e)
+		k, err := makeKey(e)
 		if err != nil {
 			return err
 		}
@@ -168,8 +212,36 @@ func (p *Principal) SetPassword(
 		k.KVNO = kvno
 		p.Keys = append(p.Keys, k)
 	}
+	if keep {
+		for _, k := range old {
+			if k.KVNO >= kvno {
+				continue
+			}
+			k.ID = 0
+			p.Keys = append(p.Keys, k)
+		}
+	}
 	p.LastPWChange = time.Now().UTC().Truncate(time.Second)
 	return nil
+}
+
+// PurgeOldKeys drops every key below the highest version, which is
+// kadmin's purgekeys.
+//
+// It is the other half of keepold: an old key is kept so that tickets
+// issued under it keep working, and removed once they cannot still be
+// in use.
+func (p *Principal) PurgeOldKeys() int {
+	highest := p.HighestKVNO()
+	var keep []Key
+	for _, k := range p.Keys {
+		if k.KVNO == highest {
+			keep = append(keep, k)
+		}
+	}
+	removed := len(p.Keys) - len(keep)
+	p.Keys = keep
+	return removed
 }
 
 // SetRandomKey writes a random key for each supported enctype at one
@@ -192,19 +264,22 @@ func (p *Principal) SetRandomKey(
 	mkey MasterKey,
 	kvno int32,
 ) error {
-	p.Keys = nil
-	for i, e := range crypto.Supported() {
-		k, err := randomKey(mkey, e)
-		if err != nil {
-			return err
-		}
-		k.PrincipalName = p.Name
-		k.KeyIndex = int32(i)
-		k.KVNO = kvno
-		p.Keys = append(p.Keys, k)
-	}
-	p.LastPWChange = time.Now().UTC().Truncate(time.Second)
-	return nil
+	return p.setKeys(kvno, false,
+		func(e crypto.EncType) (Key, error) {
+			return randomKey(mkey, e)
+		})
+}
+
+// SetRandomKeyKeepOld is SetRandomKey that keeps the previous key
+// versions, for the same reason SetPasswordKeepOld does.
+func (p *Principal) SetRandomKeyKeepOld(
+	mkey MasterKey,
+	kvno int32,
+) error {
+	return p.setKeys(kvno, true,
+		func(e crypto.EncType) (Key, error) {
+			return randomKey(mkey, e)
+		})
 }
 
 // randomKey makes and seals one random key.
