@@ -42,6 +42,7 @@ principal administration, standing in for kadmin:
                     [-maxrenewlife D] [-attr SPEC] PRINC
   kdiamond modprinc [-maxlife D] [-maxrenewlife D]
                     [-attr SPEC] [-policy NAME] PRINC
+  kdiamond renprinc OLD NEW       rename a principal
   kdiamond cpw -pw PW PRINC       change a password, bumping the kvno
   kdiamond delprinc PRINC         remove a principal
   kdiamond getprinc PRINC         print what the KDC knows
@@ -126,6 +127,7 @@ func adminCommand(cmd string) func([]string) error {
 		"addprinc":        addprinc,
 		"ank":             addprinc,
 		"modprinc":        modprinc,
+		"renprinc":        renprinc,
 		"cpw":             cpw,
 		"change_password": cpw,
 		"delprinc":        delprinc,

@@ -144,15 +144,36 @@ func (k *KDC) hintList(s *asState) ([]wire.PAData, error) {
 // absent, which means the 4096-iteration default
 // (_make_etype_info_entry leaves it empty).
 func (k *KDC) etypeInfo2(s *asState) ([]byte, error) {
-	components, realm, err := store.ParseName(s.client.Name)
+	salt, err := k.clientSalt(s)
 	if err != nil {
 		return nil, err
 	}
-	salt := string(crypto.Salt(realm, components))
 	return wire.MarshalETypeInfo2([]wire.ETypeInfo2Entry{{
 		EType: int32(s.clientEType),
 		Salt:  &salt,
 	}})
+}
+
+// clientSalt is the salt a client has to use, which is the stored one
+// when the key carries an explicit salt and the principal's default
+// otherwise.
+//
+// The explicit case is a renamed principal: the default salt is
+// derived from the name, so renaming one would invalidate every
+// password-derived key unless the salt computed under the *old* name
+// is pinned first (krb5_dbe_specialize_salt, lib/kdb/kdb5.c:2390).
+// Upstream's own rename test is exactly this -- rename, then kinit
+// with the same password (tests/t_renprinc.py:31-38).
+func (k *KDC) clientSalt(s *asState) (string, error) {
+	if s.clientSaltType == store.SaltSpecial &&
+		len(s.clientSalt) > 0 {
+		return string(s.clientSalt), nil
+	}
+	components, realm, err := store.ParseName(s.client.Name)
+	if err != nil {
+		return "", err
+	}
+	return string(crypto.Salt(realm, components)), nil
 }
 
 // errClockSkew separates a timestamp that decrypted correctly but

@@ -419,3 +419,53 @@ func assertPolicyBindsAPrincipal(t *testing.T, bin, url string) {
 	mustRun(t, bin, url, "modprinc", "-clearpolicy", "someone")
 	mustRun(t, bin, url, "delpol", "standard")
 }
+
+// TestStockKinitAfterARename is the salt's end-to-end case, and it is
+// upstream's own rename test said in this project's terms: rename a
+// principal, then have an unmodified kinit authenticate with the
+// password unchanged (tests/t_renprinc.py:31-38).
+//
+// It is the only thing that proves the salt pinning works, because
+// the symptom of getting it wrong is not an error anywhere on the
+// server -- it is a client being told "password incorrect" for a
+// password that is right. The KDC advertises a salt in PA-ETYPE-INFO2
+// and the client derives its key from that; pin the wrong one and the
+// two disagree with nothing to say why.
+func TestStockKinitAfterARename(t *testing.T) {
+	o := oracle(t)
+	bin := buildKdiamond(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 60*time.Second)
+	defer cancel()
+
+	env := pointAtDiamond(t, ctx, o, "rename", true)
+	url := searchPath(os.Getenv(TestDatabaseURL),
+		"kd_golden_e2e_rename")
+
+	// The fixture's user authenticates before the rename.
+	out, err := o.ExecEnv(ctx, env, UserPassword+"\n",
+		"kinit", UserName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("kinit before the rename: %v\n%s", err, out)
+	}
+	mustRun(t, bin, url, "renprinc", UserName, "renamed")
+
+	// And after it, with the same password and the new name.
+	out, err = o.ExecEnv(ctx, env, UserPassword+"\n",
+		"kinit", "renamed@"+Realm)
+	if err != nil {
+		t.Fatalf("kinit after the rename: %v\n%s", err, out)
+	}
+	assertTicket(t, ctx, o, env, "renamed")
+	// The client's own trace names the salt it was given, which
+	// is the old name's -- pinned, not recomputed.
+	want := `salt "` + Realm + UserName + `"`
+	if !strings.Contains(out, want) {
+		t.Errorf("the trace does not show %s:\n%s", want, out)
+	}
+	// The old name is gone, so authenticating as it must fail.
+	if _, err := o.ExecEnv(ctx, env, UserPassword+"\n",
+		"kinit", UserName+"@"+Realm); err == nil {
+		t.Error("the old name still authenticates")
+	}
+}

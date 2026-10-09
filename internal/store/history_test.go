@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 )
 
 // A history of one means the current password alone, which is
@@ -244,5 +246,148 @@ func assertBothVersions(
 	}
 	if row.KVNO != 1 {
 		t.Errorf("asked for version 1, got %d", row.KVNO)
+	}
+}
+
+// A rename carries everything that hangs off the principal, and --
+// the part that matters -- leaves the keys usable with the same
+// password. Upstream's own test is exactly that: rename, then kinit
+// with the password unchanged (tests/t_renprinc.py:31-38).
+//
+// What makes it work is pinning the salt first. The default salt is
+// the realm followed by the name components, so it changes when the
+// name does; a rename without pinning it would leave every
+// password-derived key unusable, reported to the user as "password
+// incorrect".
+func TestRenameKeepsThePasswordUsable(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	from := "before@" + testRealm
+	to := "after@" + testRealm
+	principal(t, s, from, "the-password")
+
+	if err := s.Rename(ctx, from, to); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lookup(ctx, from); !errors.Is(
+		err, ErrNotFound) {
+		t.Errorf("the old name survives: %v", err)
+	}
+	p, err := s.Lookup(ctx, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Realm != testRealm {
+		t.Errorf("realm is %q", p.Realm)
+	}
+	assertSaltPinned(t, s, p, "before", "the-password")
+}
+
+// assertSaltPinned checks every key carries an explicit salt, that it
+// is the one the *old* name produced, and that the stored key is
+// still what the password derives under it.
+func assertSaltPinned(
+	t *testing.T,
+	s *Store,
+	p *Principal,
+	oldName, password string,
+) {
+	t.Helper()
+	want := crypto.Salt(testRealm, []string{oldName})
+	start := 0
+	for {
+		row, key, err := s.Key(p, &start, AnyEType,
+			AnySaltType, HighestKVNO)
+		if errors.Is(err, ErrNoMatchingKey) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Key: %v", err)
+		}
+		if row.SaltType != SaltSpecial {
+			t.Errorf("enctype %d salt type is %d",
+				row.EType, row.SaltType)
+		}
+		if string(row.Salt) != string(want) {
+			t.Errorf("enctype %d salt is %q, want %q",
+				row.EType, row.Salt, want)
+		}
+		prof, err := crypto.Profile(crypto.EncType(row.EType))
+		if err != nil {
+			t.Fatal(err)
+		}
+		derived, err := prof.StringToKey(password, want, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(key) != string(derived) {
+			t.Errorf("enctype %d key no longer matches "+
+				"the password", row.EType)
+		}
+	}
+}
+
+// Renaming twice works, because the second rename finds the salt the
+// first pinned and leaves it alone. Upstream tests this case
+// separately and says why in a comment: the principal "will have" the
+// special salt type after the first rename
+// (tests/t_renprinc.py:40-43).
+func TestRenamingTwiceKeepsTheFirstSalt(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	principal(t, s, "one@"+testRealm, "the-password")
+	if err := s.Rename(ctx, "one@"+testRealm,
+		"two@"+testRealm); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rename(ctx, "two@"+testRealm,
+		"three@"+testRealm); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Lookup(ctx, "three@"+testRealm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Still the salt of the *first* name, not the second's.
+	assertSaltPinned(t, s, p, "one", "the-password")
+}
+
+// A rename carries the password history too, which it has to: the
+// history is not an association on the principal, so an ordinary Save
+// cannot touch it and a rename has to move it by hand.
+func TestRenameCarriesTheHistory(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	p := withPolicy(t, s, "three", 3)
+	if err := s.RecordPasswordHistory(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	before := countHistory(t, s, p.Name)
+	if before == 0 {
+		t.Fatal("nothing was recorded")
+	}
+	to := "renamed@" + testRealm
+	if err := s.Rename(ctx, p.Name, to); err != nil {
+		t.Fatal(err)
+	}
+	if n := countHistory(t, s, to); n != before {
+		t.Errorf("%d history rows followed, want %d",
+			n, before)
+	}
+	if n := countHistory(t, s, p.Name); n != 0 {
+		t.Errorf("%d history rows stayed behind", n)
+	}
+}
+
+// A rename onto a name that exists is refused, because the
+// alternative is merging two principals.
+func TestRenameOntoAnExistingNameIsRefused(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	principal(t, s, "a@"+testRealm, "pw-a")
+	principal(t, s, "b@"+testRealm, "pw-b")
+	if err := s.Rename(ctx, "a@"+testRealm,
+		"b@"+testRealm); !errors.Is(err, ErrNameInUse) {
+		t.Errorf("%v, want ErrNameInUse", err)
 	}
 }

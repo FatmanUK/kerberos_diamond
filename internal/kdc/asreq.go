@@ -41,6 +41,15 @@ type asState struct {
 	clientEType crypto.EncType
 	clientKVNO  int32
 
+	// clientSaltType and clientSalt are that key's stored salt.
+	// They matter for one reason: a renamed principal's keys
+	// carry an explicit salt, because the default one is derived
+	// from the name and the name has changed. Advertising the
+	// default instead would tell every client the wrong salt and
+	// fail as "password incorrect" with nothing to say why.
+	clientSaltType int32
+	clientSalt     []byte
+
 	// replyKey is what the reply's enc-part is actually sealed
 	// with. It is the client's long-term key unless FAST
 	// strengthened it, and the two are kept apart because the
@@ -198,6 +207,8 @@ func (k *KDC) keys(s *asState) (int32, string) {
 		}
 		s.clientKey, s.clientKVNO = key, row.KVNO
 		s.clientEType = crypto.EncType(e)
+		s.clientSaltType = row.SaltType
+		s.clientSalt = row.Salt
 		// The reply key starts as the client key and stays so
 		// unless FAST strengthens it.
 		s.replyKey = key

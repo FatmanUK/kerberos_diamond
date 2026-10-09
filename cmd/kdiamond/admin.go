@@ -64,7 +64,13 @@ func principalArg(
 	if fs.NArg() != 1 {
 		return "", errors.New("name exactly one principal")
 	}
-	name := fs.Arg(0)
+	return qualify(fs.Arg(0), realm)
+}
+
+// qualify completes a bare name with this KDC's realm and refuses any
+// other, which is what stops a command meant for one realm landing in
+// another's rows.
+func qualify(name, realm string) (string, error) {
 	if !strings.Contains(name, "@") {
 		return name + "@" + realm, nil
 	}
@@ -529,4 +535,40 @@ func setPolicy(
 		return nil
 	}
 	return s.SetPasswordExpiry(ctx, p, time.Now())
+}
+
+// renprinc renames a principal, which is kadmin's renprinc.
+//
+// The name is the primary key of five relations, so this is the most
+// expensive write there is -- and the salt has to be pinned before
+// anything moves, because the default salt is derived from the name
+// and every password-derived key would otherwise stop working.
+func renprinc(args []string) error {
+	fs := flag.NewFlagSet("renprinc", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New(
+			"expected an old and a new principal name")
+	}
+	s, c, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	from, err := qualify(fs.Arg(0), c.Realm)
+	if err != nil {
+		return err
+	}
+	to, err := qualify(fs.Arg(1), c.Realm)
+	if err != nil {
+		return err
+	}
+	err = s.Rename(context.Background(), from, to)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Principal %q renamed to %q.\n", from, to)
+	return nil
 }

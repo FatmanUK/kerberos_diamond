@@ -411,3 +411,136 @@ func (p *Principal) HighestKVNO() int32 {
 	}
 	return p.Keys[0].KVNO
 }
+
+// SpecializeSalt pins every key's salt to the value computed from the
+// principal's *current* name, which is what makes a rename survivable
+// (krb5_dbe_specialize_salt, lib/kdb/kdb5.c:2390-2421).
+//
+// The default salt is the realm followed by the name components, so
+// it changes when the name does -- and a principal renamed without
+// pinning it first would have every password-derived key become
+// unusable, reported to the user as "password incorrect". Upstream's
+// rename test is precisely this: rename, then kinit with the same
+// password (tests/t_renprinc.py:31-38).
+//
+// A key that already carries an explicit salt is left alone, which is
+// why renaming twice works: the second rename finds the salt from the
+// first still pinned and has nothing to do.
+func (p *Principal) SpecializeSalt() error {
+	components, realm, err := ParseName(p.Name)
+	if err != nil {
+		return err
+	}
+	salt := crypto.Salt(realm, components)
+	for i := range p.Keys {
+		k := &p.Keys[i]
+		if k.SaltType == SaltSpecial && len(k.Salt) > 0 {
+			continue
+		}
+		k.SaltType = SaltSpecial
+		k.Salt = append([]byte(nil), salt...)
+	}
+	return nil
+}
+
+// ErrNameInUse reports a rename onto a principal that exists.
+var ErrNameInUse = errors.New("store: name already in use")
+
+// Rename moves a principal to a new name, carrying everything that
+// hangs off it.
+//
+// It is the most expensive write in this package and the reason is
+// the schema: a principal's name is its primary key *and* the foreign
+// key of its keys, its string attributes, its tl-data and its
+// password history, so a rename is five updates that have to happen
+// together. They do, in one transaction.
+//
+// The salt is pinned first, before anything moves. That ordering is
+// the whole of what makes a rename safe, because the salt has to be
+// computed from the name the keys were derived under.
+//
+// Upstream refuses two cases and so does this: a target that already
+// exists (KRB5_KDB_INUSE) and a source that is an alias rather than a
+// principal in its own right (KRB5_KDB_ALIAS_UNSUPPORTED,
+// lib/kdb/kdb5.c:2240-2250). The second is refused here because an
+// alias has no keys of its own to move, so "renaming" one would
+// silently create a principal with none.
+func (s *Store) Rename(
+	ctx context.Context,
+	from, to string,
+) error {
+	p, err := s.Lookup(ctx, from)
+	if err != nil {
+		return err
+	}
+	if _, err := s.Lookup(ctx, to); err == nil {
+		return fmt.Errorf("%w: %q", ErrNameInUse, to)
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if err := p.SpecializeSalt(); err != nil {
+		return err
+	}
+	_, realm, err := ParseName(to)
+	if err != nil {
+		return err
+	}
+	return s.renameRows(ctx, p, to, realm)
+}
+
+// renameRows is the transaction.
+func (s *Store) renameRows(
+	ctx context.Context,
+	p *Principal,
+	to, realm string,
+) error {
+	old := p.Name
+	err := s.db.WithContext(ctx).Transaction(
+		func(tx *gorm.DB) error {
+			p.Name = to
+			p.Realm = realm
+			for i := range p.Keys {
+				p.Keys[i].PrincipalName = to
+				p.Keys[i].ID = 0
+			}
+			for i := range p.StringAttrs {
+				p.StringAttrs[i].PrincipalName = to
+			}
+			for i := range p.TLData {
+				p.TLData[i].PrincipalName = to
+				p.TLData[i].ID = 0
+			}
+			if err := savePrincipal(tx, p); err != nil {
+				return err
+			}
+			return renameLeftovers(tx, old, to)
+		})
+	if err != nil {
+		return fmt.Errorf("store: rename %q: %w", old, err)
+	}
+	return nil
+}
+
+// renameLeftovers moves what savePrincipal does not: the password
+// history, which is deliberately not an association on Principal so
+// that an ordinary Save cannot wipe it, and the old principal row
+// with the rows that hung off it.
+func renameLeftovers(tx *gorm.DB, old, to string) error {
+	err := tx.Model(&HistoryKey{}).
+		Where("principal_name = ?", old).
+		Update("principal_name", to).Error
+	if err != nil {
+		return err
+	}
+	for _, m := range []any{
+		&Key{}, &StringAttr{}, &TLDatum{},
+	} {
+		err := tx.Where("principal_name = ?", old).
+			Delete(m).Error
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Where("name = ?", old).
+		Delete(&Principal{}).Error
+}
