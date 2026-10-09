@@ -66,6 +66,21 @@ type Identity struct {
 	CTime time.Time
 	CUsec int32
 
+	// MutualRequired reports AP_OPTS_MUTUAL_REQUIRED, which is
+	// the client asking to be told the server holds the key too.
+	// Whether to answer is the caller's: krb5_rd_req neither
+	// honours nor refuses it.
+	MutualRequired bool
+
+	// Cksum is the authenticator's checksum field as it arrived,
+	// unverified and uninterpreted. Nothing in this package can
+	// check it -- openAdminAuth says why -- and for a GSS client
+	// it is not a checksum at all but the 0x8003 structure of
+	// channel bindings and context flags, which the negotiation
+	// layer reads. Absent for a client that sent none, which
+	// upstream tolerates (accept_sec_context.c:487-493).
+	Cksum *wire.Checksum
+
 	// Session is the ticket's session key, which a caller that
 	// replies cannot do without: an AP-REP and a KRB-PRIV are
 	// both sealed with it, or with SubKey when the client sent
@@ -144,17 +159,30 @@ func (k *KDC) acceptAPReq(
 	if code != 0 {
 		return nil, code, status
 	}
+	return identityOf(ap, tkt, a), 0, ""
+}
+
+// identityOf assembles what the three checks above established.
+func identityOf(
+	ap wire.APReq,
+	tkt wire.EncTicketPart,
+	a wire.Authenticator,
+) *Identity {
 	return &Identity{
 		CRealm:  tkt.CRealm,
 		CName:   tkt.CName,
 		Service: ap.Ticket.SName,
 		Initial: tkt.Flags.Has(wire.FlagInitial),
+		MutualRequired: ap.Options&
+			wire.APOptMutualRequired != 0,
+
 		SubKey:  a.SubKey,
 		Seq:     a.SeqNumber,
 		CTime:   a.CTime,
 		CUsec:   a.CUsec,
+		Cksum:   a.Cksum,
 		Session: tkt.Key,
-	}, 0, ""
+	}
 }
 
 // adminService is check_rpcsec_auth's own check

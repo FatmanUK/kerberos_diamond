@@ -136,6 +136,12 @@ const (
 	// random key by kdb5_util and nothing compares the two.
 	ChangePWPassword = "changepwpassword"
 
+	// AdminPassword is the key of kadmin/admin, the principal a
+	// remote administrator authenticates to. Only the Go side
+	// needs it, for the same reason ChangePWPassword is only
+	// needed there.
+	AdminPassword = "adminpassword"
+
 	// PreauthName demands pre-authentication; UserName does not.
 	// Keeping both means the padata-free single round trip and
 	// the PA-ENC-TIMESTAMP path can be exercised separately.
@@ -155,6 +161,14 @@ var ReferralService = []string{"host", "www." + ReferralDomain}
 // password and then presents it, which is why the principal has to
 // exist before any of that works.
 var ChangePWName = []string{"kadmin", "changepw"}
+
+// AdminName is the administrative service's components, which is what
+// a GSS initiator asks for a ticket to. Written as the host-based
+// pair `kadmin@admin' by a client, because krb5_sname_to_principal
+// turns a hostbased GSS name into service/host -- so the second
+// component is a hostname as far as the client is concerned, and
+// AdminRealmMap exists to tell it which realm that host belongs to.
+var AdminName = []string{"kadmin", "admin"}
 
 // Oracle is a running C KDC.
 type Oracle struct {

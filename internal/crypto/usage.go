@@ -34,6 +34,15 @@ const (
 	UsageTGSReqAuthCksum Usage = 6
 	UsageTGSReqAuth      Usage = 7
 
+	// UsageAPReqAuthCksum keys the checksum in an application
+	// AP-REQ's authenticator (krb5.hin:953). The Kerberos GSS
+	// mechanism normally puts structured data in that field
+	// instead of a checksum and so never uses this -- but Samba
+	// sends a real checksum over empty data, and upstream
+	// verifies it here rather than refusing the token
+	// (accept_sec_context.c:494-512).
+	UsageAPReqAuthCksum Usage = 10
+
 	// UsageAPReqAuth encrypts an ordinary application AP-REQ's
 	// authenticator (krb5.hin:954). It is distinct from
 	// UsageTGSReqAuth, and FAST is where that distinction becomes

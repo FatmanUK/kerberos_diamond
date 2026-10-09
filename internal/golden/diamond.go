@@ -191,6 +191,11 @@ func realmEntries() []fixtureEntry {
 		// create sets it on this principal and so does this.
 		{ChangePWName, ChangePWPassword, 1,
 			store.AttrPWChangeService},
+		// kadmin/admin is the administrative surface's own
+		// principal, and it is an ordinary service entry: the
+		// gate that makes it administrative is in AcceptAPReq
+		// and not in the database.
+		{AdminName, AdminPassword, 1, 0},
 	}
 }
 
