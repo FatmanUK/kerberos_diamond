@@ -30,6 +30,20 @@ type asState struct {
 	client *store.Principal
 	server *store.Principal
 
+	// indicators are how the client authenticated, which
+	// pre-authentication decides.
+	//
+	// **Nothing sets this yet**, and that is a fact about the
+	// mechanisms rather than about the plumbing: upstream's
+	// indicators come from preauth modules, and the three that
+	// set one are OTP, PKINIT and SPAKE. The first two are
+	// declared non-goals and SPAKE is the next step, which is
+	// where the first indicator in this project will come from.
+	// Until then a service with require_auth refuses every AS
+	// request, which is the correct answer to "this service
+	// demands an authentication method this realm cannot do".
+	indicators []string
+
 	// referral and referralRealm are the client name and realm a
 	// KDC_ERR_WRONG_REALM carries, which is the one error whose
 	// cname names another realm -- and the only reason a client
@@ -142,6 +156,13 @@ func (k *KDC) AS(
 		return nil, k.wrapErr(s.fast, e, s.req.Body.Nonce)
 	}
 	k.audit(s, store.Succeeded)
+	// The server's require_auth, checked after pre-authentication
+	// because that is where an indicator would have come from
+	// (do_as_req.c:284, immediately after the preauth loop).
+	if code, status := checkIndicators(
+		s.server, s.indicators); code != 0 {
+		return nil, k.fastErrorAS(s, code, status)
+	}
 	k.times(s)
 	if err := k.sessionKey(s); err != nil {
 		return nil, k.fastErrorAS(s, wire.ErrCodeGeneric,

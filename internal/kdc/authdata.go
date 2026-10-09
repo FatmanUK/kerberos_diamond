@@ -45,7 +45,39 @@ func (k *KDC) ticketAuthData(
 	if code != 0 {
 		return nil, code, status
 	}
-	return append(out, tgt...), 0, ""
+	out = append(out, tgt...)
+	return k.addTGSIndicators(s, out)
+}
+
+// addTGSIndicators carries verified authentication indicators across
+// and checks them against the server's require_auth.
+//
+// The order is upstream's and both halves matter: the indicators are
+// read out of the presented ticket, **checked** against what the
+// server demands (check_indicators from do_tgs_req.c:896-903), and
+// only then written into the new ticket. Checking after writing would
+// issue the ticket and then refuse it.
+func (k *KDC) addTGSIndicators(
+	s *tgsState,
+	ad wire.AuthorizationData,
+) (wire.AuthorizationData, int32, string) {
+	tgtKey, tgtEType, tgtKVNO, err := k.localTGT()
+	if err != nil {
+		return nil, wire.ErrCodeGeneric, "LOCAL TGT KEY"
+	}
+	ind := k.authIndicators(s.header, tgtKey, tgtEType,
+		tgtKVNO)
+	if code, status := checkIndicators(
+		s.server, ind); code != 0 {
+		return nil, code, status
+	}
+	part := s.encTicketPart()
+	out, err := k.addIndicators(ad, ind, s.server, part,
+		s.serverKey, s.serverEType)
+	if err != nil {
+		return nil, wire.ErrCodeGeneric, "ADD INDICATORS"
+	}
+	return out, 0, ""
 }
 
 // requestAuthData decrypts and filters the request's own
