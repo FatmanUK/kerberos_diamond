@@ -44,6 +44,22 @@ const (
 	ErrCodeMorePreauthData    int32 = 91
 	ErrCodeUnknownCriticalOpt int32 = 93
 	ErrCodeGeneric            int32 = 60
+
+	// ErrCodeWrongRealm is the AS exchange's referral, and it is
+	// not only an error: a client that asked for canonicalisation
+	// -- explicitly, or implicitly by sending an NT-ENTERPRISE
+	// name -- reads a WRONG_REALM carrying a cname in *another*
+	// realm as "ask over there instead", rewrites its request's
+	// client realm from the error and starts again (is_referral
+	// and the branch that uses it, get_in_tkt.c:1745-1759).
+	//
+	// Which is why the realm in the error matters more than the
+	// code: is_referral refuses to treat it as a referral unless
+	// the cname's realm actually differs
+	// (get_in_tkt.c:1659-1667), so an error naming this realm is
+	// a plain refusal and upstream keeps a regression test for
+	// exactly that confusion (tests/t_general.py:56-61).
+	ErrCodeWrongRealm int32 = 68
 )
 
 // The AP errors, which a TGS exchange answers with because the

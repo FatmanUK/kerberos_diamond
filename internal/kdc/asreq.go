@@ -30,6 +30,15 @@ type asState struct {
 	client *store.Principal
 	server *store.Principal
 
+	// referral and referralRealm are the client name and realm a
+	// KDC_ERR_WRONG_REALM carries, which is the one error whose
+	// cname names another realm -- and the only reason a client
+	// reads it as a referral rather than a refusal
+	// (do_as_req.c:806-807 chooses the canonicalised name for
+	// this code alone).
+	referral      *wire.PrincipalName
+	referralRealm string
+
 	// ticketCName and ticketSName are the names the reply
 	// actually carries, which are the requested ones unless
 	// KDC_OPT_CANONICALIZE asked for the database's. They differ
@@ -147,12 +156,23 @@ func (k *KDC) AS(
 }
 
 // fastErrorAS is krbError, wrapped in the tunnel when there is one.
+//
+// A referral is the one error whose cname names a realm that is not
+// this one, and upstream picks that name for KDC_ERR_WRONG_REALM
+// alone (do_as_req.c:806-807): every other error echoes the name the
+// request sent, because a client has to recognise it.
 func (k *KDC) fastErrorAS(
 	s *asState,
 	code int32,
 	status string,
 ) *wire.KRBError {
-	e := k.krbError(code, status, s.nameOrNil())
+	var e *wire.KRBError
+	if s.referral != nil && code == wire.ErrCodeWrongRealm {
+		e = k.krbError(code, status, s.referral)
+		e.CRealm = s.referralRealm
+	} else {
+		e = k.krbError(code, status, s.nameOrNil())
+	}
 	return k.wrapErr(s.fast, e, s.req.Body.Nonce)
 }
 
@@ -204,6 +224,12 @@ func (k *KDC) principals(s *asState) (int32, string) {
 		return wire.ErrCodeSPrincipalUnknown, "NO SERVER NAME"
 	}
 	if code, status := k.ourRealm(s); code != 0 {
+		return code, status
+	}
+	// An enterprise name carries its own realm, so it is resolved
+	// -- or referred elsewhere -- before anything tries to look
+	// it up.
+	if code, status := k.enterpriseClient(s); code != 0 {
 		return code, status
 	}
 	var err error
