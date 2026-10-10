@@ -301,3 +301,38 @@ func optTime(t time.Time) time.Time {
 	}
 	return kerberosTime(t)
 }
+
+// CtxWrap builds one context-tagged element: the tag, the length, and
+// the body verbatim.
+//
+// It is exported for the one caller outside this package that has to
+// build a CHOICE -- PA-SPAKE, whose four arms are each a context tag
+// around a SEQUENCE and which encoding/asn1 cannot express as a
+// struct. Doing it by hand there would mean repeating the tag
+// arithmetic, and the comment on ctxWrap records what happens when
+// that goes wrong.
+func CtxWrap(tag int, body []byte) []byte {
+	return ctxWrap(tag, body).FullBytes
+}
+
+// CtxTagOf reports the context tag of an element and its contents,
+// which is how a CHOICE is dispatched on.
+//
+// It refuses anything that is not a constructed context tag below 31,
+// because a CHOICE arm is always one and because reading a primitive
+// or a high tag as an arm number would turn a malformed message into
+// a plausible one.
+func CtxTagOf(b []byte) (int, []byte, bool) {
+	if len(b) < 2 || b[0]&0xE0 != 0xA0 {
+		return 0, nil, false
+	}
+	tag := int(b[0] & 0x1F)
+	if tag == 0x1F {
+		return 0, nil, false
+	}
+	n, hdr, err := tlvLength(b)
+	if err != nil || hdr+n != len(b) {
+		return 0, nil, false
+	}
+	return tag, b[hdr : hdr+n], true
+}
