@@ -186,6 +186,13 @@ const (
 	PAFXCookie     int32 = 133
 	PAFXFast       int32 = 136
 
+	// PAPACOptions is what a client uses to say which [MS-KILE]
+	// PAC behaviours it understands, and what the KDC echoes back
+	// in the reply's *encrypted* padata to say which of them it
+	// honoured (krb5.hin, kdc_add_pa_pac_options at
+	// kdc/kdc_util.c:1825-1853).
+	PAPACOptions int32 = 167
+
 	// PAFXError carries a KRB-ERROR *inside* a FAST reply, where
 	// the outer message is the refusal and this is the real one
 	// (RFC 6113; krb5.hin:1836). A client refuses a FAST error

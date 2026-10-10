@@ -249,11 +249,35 @@ func keyExpiry(s *asState) uint32 {
 //
 // Both are conditional on the client having asked for the checksum.
 // That looks odd for the advertisement but it is upstream's
-// structure: the whole function returns early without a
+// structure: kdc_handle_protected_negotiation returns early without a
 // PA-REQ-ENC-PA-REP in the request (:1779-1782), so a client that
 // does not ask for a checksum is not told about FAST either. It will
 // find out by trying.
+//
+// **A third thing goes in it and is not conditional on that**, which
+// is why this is two functions now. return_enc_padata calls the
+// negotiation handler and then kdc_add_pa_pac_options
+// (kdc_preauth.c:1648-1657), and the second does not care whether the
+// first produced anything -- so a request carrying PA-PAC-OPTIONS and
+// no PA-REQ-ENC-PA-REP gets an enc-padata list holding only the PAC
+// options echo. The order is upstream's: the checksum, the FAST
+// advertisement, then the echo.
 func (k *KDC) encPAData(s *asState) ([]wire.PAData, error) {
+	out, err := k.negotiationPAData(s)
+	if err != nil {
+		return nil, err
+	}
+	if echo := pacOptionsEcho(s.req.PAData); echo != nil {
+		out = append(out, *echo)
+	}
+	return out, nil
+}
+
+// negotiationPAData is the reply checksum and the FAST advertisement,
+// both gated on the client having asked for the checksum.
+func (k *KDC) negotiationPAData(
+	s *asState,
+) ([]wire.PAData, error) {
 	if findPAData(s.req.PAData, wire.PAReqEncPARep) == nil {
 		return nil, nil
 	}

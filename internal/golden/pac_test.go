@@ -153,3 +153,82 @@ func assertNoAuthData(t *testing.T, side string, x Exchange) {
 			side, n)
 	}
 }
+
+// The PA-PAC-OPTIONS echo, compared against the C.
+//
+// The request asks for RBCD **and** for every other bit, so what is
+// compared is the mask rather than a pass-through: a KDC that echoed
+// the request back would send 0xffffffff and a KDC that honoured only
+// what it implements sends 0x10000000. Both sides have to send the
+// second, and padataSummary renders this element by its flags rather
+// than by its length for exactly that reason -- a KerberosFlags is a
+// fixed thirty-two bits, so every possible value is the same number
+// of octets.
+//
+// PA-REQ-ENC-PA-REP goes in too, so the case also pins the *order*:
+// the reply checksum, the FAST advertisement, then the echo
+// (return_enc_padata, kdc/kdc_preauth.c:1635-1661).
+func TestThePACOptionsEchoMatchesTheC(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 30*time.Second)
+	defer cancel()
+
+	opts, err := wire.MarshalPAPACOptions(0xFFFFFFFF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	till := time.Now().UTC().Add(requestedLife).Truncate(
+		time.Second)
+	req := asRequest(t, UserName, till)
+	req.PAData = append(req.PAData,
+		wire.PAData{Type: wire.PAPACOptions, Value: opts},
+		wire.PAData{Type: wire.PAReqEncPARep})
+	msg, err := wire.MarshalASReq(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cRaw, err := o.SendRaw(ctx, msg)
+	if err != nil {
+		t.Fatalf("asking the C KDC: %v", err)
+	}
+	cx := open(t, cRaw, UserPassword, []string{UserName})
+
+	d := diamond(t, "kd_golden_pacopts",
+		pinned(cx.Enc.AuthTime))
+	goRaw, err := d.AS(req)
+	if err != nil {
+		t.Fatalf("asking the Go KDC: %v", err)
+	}
+	gx := open(t, goRaw, UserPassword, []string{UserName})
+
+	assertEchoedRBCD(t, "oracle", cx)
+	assertEchoedRBCD(t, "diamond", gx)
+	assertSucceeded(t, cx)
+	assertSucceeded(t, gx)
+	reportDiffs(t, cx, gx)
+}
+
+// assertEchoedRBCD insists the echo is there and masked, on each side
+// separately -- because two KDCs that both omitted it would agree
+// perfectly while testing nothing.
+func assertEchoedRBCD(t *testing.T, side string, x Exchange) {
+	t.Helper()
+	for _, d := range x.Enc.EncPAData {
+		if d.Type != wire.PAPACOptions {
+			continue
+		}
+		f, err := wire.UnmarshalPAPACOptions(d.Value)
+		if err != nil {
+			t.Fatalf("%s: %v", side, err)
+		}
+		if f != wire.PACOptRBCD {
+			t.Errorf("%s: echoed %#08x, want %#08x",
+				side, uint32(f),
+				uint32(wire.PACOptRBCD))
+		}
+		return
+	}
+	t.Errorf("%s: no PA-PAC-OPTIONS in the enc-padata: %v",
+		side, x.Enc.EncPAData)
+}

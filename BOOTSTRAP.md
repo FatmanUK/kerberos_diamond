@@ -207,8 +207,8 @@ Everything the plan file listed is done, so this list is now the live one.
    against bytes three generations of Windows KDC produced, the KDC
    issues a signed PAC in every ticket unless the client declines one
    or the realm turns them off, and all 88 golden cases compare it —
-   with one case comparing the two KDCs' PACs octet for octet. Still
-   to do is `PA-PAC-OPTIONS` and then S4U.
+   with one case comparing the two KDCs' PACs octet for octet.
+   `PA-PAC-OPTIONS` is implemented and echoed too. Still to do is S4U.
 9. **S4U2Self and S4U2Proxy**, last.
 
 ## 3. Project State
@@ -496,6 +496,22 @@ are not "fixed" back by accident.
   ordinary TGS request (`:544-553`), because rebuilding it would quietly
   replace the name in a ticket being re-issued. Which means the realm-less
   unparse rule above is applied once, at the AS exchange, and then carried.
+- **`PA-PAC-OPTIONS` carries one bit, and the echo says what was
+  *honoured* rather than what was asked.** MIT implements
+  `RBCD = 0x10000000` alone (`k5-int.h:579`), masks everything else off
+  (`kdc_util.c:1839`) and echoes the survivor back in the reply's
+  **encrypted** padata — suppressing the element entirely when nothing
+  survives (`:1840-1843`), which is what distinguishes "I honour none of
+  what you asked" from "I honour this, and the bit is zero". The other
+  [MS-KILE] bits — claims, branch-aware, forward-to-full-DC — are not
+  merely unimplemented: they are not named anywhere in MIT at all.
+
+  One deliberate divergence: **a malformed PA-PAC-OPTIONS is ignored
+  here, where upstream refuses the request.** `kdc_get_pa_pac_options`
+  propagates its decode failure, so a stock KDC turns an unreadable
+  *capability announcement* into a failed authentication. The element
+  carries no instruction a KDC has to obey, so the answer here is to
+  announce nothing back and issue the ticket.
 - **`crypto.ProfileForCksum` exists for this and nothing else yet.** There
   is no checksum table in this project, because every keyed checksum a
   Kerberos message carries is the one its enctype requires. A PAC is the
@@ -910,6 +926,14 @@ into `mother`; they are read-only reference.
 
 `make check` runs `go vet`, the formatting check, the 70-column check and the
 tests. It is green.
+
+`make test` carries an explicit `-timeout` (30m, as `TEST_TIMEOUT`), because
+Go's default is ten minutes per package and the differential package passed
+it: it drives a containerised C KDC over TCP for every case, and `-race`
+roughly quadruples the wall clock. The limit is raised rather than removed,
+so a harness that hangs still fails instead of waiting for ever — and it is
+raised only there, because `make golden` runs the same package without
+`-race` in about two minutes.
 
 - **`internal/config`** — covered. Defaults, empty-is-unset, whitespace-is-
   unset, the duration parse, and that a bad environment reports *every*

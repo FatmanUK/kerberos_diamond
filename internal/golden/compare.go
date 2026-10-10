@@ -318,10 +318,28 @@ func padataSummary(ps []wire.PAData) string {
 			parts[i] = "type=136,len=<fast>"
 			continue
 		}
+		// PA-PAC-OPTIONS is rendered by its *flags* and not
+		// by its length. The element is a fixed-width
+		// KerberosFlags, so every possible value is the same
+		// number of octets and a length comparison would pass
+		// a KDC that echoed a different bit back.
+		if p.Type == wire.PAPACOptions {
+			parts[i] = pacOptionsSummary(p.Value)
+			continue
+		}
 		parts[i] = fmt.Sprintf("type=%d,len=%d",
 			p.Type, len(p.Value))
 	}
 	return strings.Join(parts, " ")
+}
+
+// pacOptionsSummary renders a PA-PAC-OPTIONS by the flags in it.
+func pacOptionsSummary(der []byte) string {
+	f, err := wire.UnmarshalPAPACOptions(der)
+	if err != nil {
+		return fmt.Sprintf("type=167,<unparseable: %v>", err)
+	}
+	return fmt.Sprintf("type=167,flags=%#08x", uint32(f))
 }
 
 // A non-empty PA-FX-FAST is the one padata element whose length is

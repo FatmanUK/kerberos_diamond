@@ -217,6 +217,27 @@ func (k *KDC) tgsEncPart(s *tgsState) (*wire.EncryptedData, error) {
 // both paths (do_tgs_req.c:1099) and the client's check keys off the
 // ticket's ENC-PA-REP flag, which a TGS ticket carries too.
 func (k *KDC) tgsEncPAData(s *tgsState) ([]wire.PAData, error) {
+	out, err := k.tgsNegotiationPAData(s)
+	if err != nil {
+		return nil, err
+	}
+	// And the PA-PAC-OPTIONS echo, which is not conditional on
+	// the checksum having been asked for -- see encPAData. It
+	// matters more here than on the AS path: RBCD is a TGS
+	// feature, so a client announcing it is announcing it on a
+	// TGS request.
+	if echo := pacOptionsEcho(s.req.PAData); echo != nil {
+		out = append(out, *echo)
+	}
+	return out, nil
+}
+
+// tgsNegotiationPAData is the reply checksum and the FAST
+// advertisement, both gated on the client having asked for the
+// checksum.
+func (k *KDC) tgsNegotiationPAData(
+	s *tgsState,
+) ([]wire.PAData, error) {
 	if findPAData(s.req.PAData, wire.PAReqEncPARep) == nil {
 		return nil, nil
 	}

@@ -119,13 +119,22 @@ distclean: clean pod-clean ## Remove artefacts and containers
 # An already-set KD_TEST_DATABASE_URL is honoured and no container is
 # started, so CI can hand this a service database and still run the
 # same target a developer runs.
+# Go's default per-package timeout is ten minutes, and the differential
+# package passed it: it drives a containerised C KDC over TCP for every
+# case, and `-race' roughly quadruples the wall clock. The limit is
+# raised rather than removed, because a harness that hangs should still
+# fail rather than wait for ever -- and raised here and not in the
+# `golden' target, which runs the same package without `-race' in about
+# two minutes.
+TEST_TIMEOUT ?= 30m
+
 .PHONY: test
 test: ## Run the tests (starts Postgres unless one is given)
 	@if [ -z "$$KD_TEST_DATABASE_URL" ]; then \
 		$(MAKE) --no-print-directory db-up; \
 	fi
 	KD_TEST_DATABASE_URL="$${KD_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
-		$(GO) test -race ./...
+		$(GO) test -race -timeout $(TEST_TIMEOUT) ./...
 
 .PHONY: test-short
 test-short: ## Run only the tests that need no database
