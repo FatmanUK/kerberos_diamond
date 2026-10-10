@@ -171,9 +171,14 @@ func marshalResponse(r Response) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The tag goes inside the RawValue: encoding/asn1 emits
+	// FullBytes verbatim and ignores the field's `explicit' tag,
+	// so a bare EncryptedData here would encode with no [1]
+	// around it and decode as absent. wire.CtxContent reads it
+	// back whichever way round it is.
 	return asn1.Marshal(derResponse{
 		PubKey: r.PubKey,
-		Factor: asn1.RawValue{FullBytes: ed},
+		Factor: wire.CtxRaw(1, ed),
 	})
 }
 
@@ -249,7 +254,7 @@ func unmarshalResponse(
 		return Message{}, ErrBadMessage
 	}
 	ed, err := wire.UnmarshalEncryptedData(
-		d.Factor.FullBytes)
+		wire.CtxContent(d.Factor))
 	if err != nil {
 		return Message{}, ErrBadMessage
 	}

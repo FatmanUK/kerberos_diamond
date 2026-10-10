@@ -69,6 +69,30 @@ type KDC struct {
 	// a user change its own password in a realm that has
 	// configured no list at all.
 	AdminACL acl.ACL
+
+	// SPAKEIndicators are the authentication indicators a
+	// successful SPAKE exchange asserts, which is upstream's
+	// per-realm spake_preauth_indicator (add_indicators,
+	// plugins/preauth/spake/spake_kdc.c:155-183).
+	//
+	// Empty means SPAKE still strengthens the reply key and still
+	// says nothing about it in the ticket -- which is upstream's
+	// default too, and which is why a realm that wants services
+	// to be able to *insist* on SPAKE has to name an indicator
+	// here and then set require_auth on those services.
+	SPAKEIndicators []string
+
+	// SPAKEGroups are the SPAKE groups this realm will negotiate,
+	// **empty meaning the mechanism is not offered**.
+	//
+	// Empty is upstream's default for a KDC and not for a client:
+	// DEFAULT_GROUPS_KDC is the empty string where
+	// DEFAULT_GROUPS_CLIENT is "edwards25519"
+	// (plugins/preauth/spake/groups.c:59-60). So a stock realm
+	// does not offer SPAKE until told to, while every stock
+	// client is ready to do it -- and copying that default is
+	// what keeps this KDC's hint list identical to a stock one's.
+	SPAKEGroups []int32
 }
 
 // The realm-wide lifetime defaults, from k5-int.h:132-133 by way of

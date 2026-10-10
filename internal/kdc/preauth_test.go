@@ -25,33 +25,54 @@ func TestPreauthRequiredCarriesAHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("e-data: %v", err)
 	}
-	// Upstream's order, and the first element is the surprise: an
-	// *empty* PA-FX-FAST, which get_preauth_hint_list adds before
-	// anything else (kdc/kdc_preauth.c:999-1001) and which is how
-	// a client learns it may upgrade this exchange to FAST. Then
-	// the etype-info, then the factor. The cookie last is
-	// upstream's: prepare_error_as appends one to every AS
-	// refusal carrying hints, with no condition on FAST
-	// (do_as_req.c:785-796).
-	want := []int32{
-		wire.PAFXFast, wire.PAETypeInfo2, wire.PAEncTimestamp,
-		wire.PAFXCookie,
-	}
-	if len(hints) != len(want) {
+	if len(hints) != len(defaultHints()) {
 		t.Fatalf("got %d hints: %+v", len(hints), hints)
 	}
-	for i, w := range want {
-		if hints[i].Type != w {
-			t.Errorf("hint %d is type %d, want %d",
-				i, hints[i].Type, w)
-		}
-	}
+	assertHintTypes(t, hints, defaultHints())
 	// Both the advertisement and the factor carry nothing: they
 	// are the presence of an offer, not its content.
 	for _, i := range []int{0, 2} {
 		if len(hints[i].Value) != 0 {
 			t.Errorf("hint %d carries %d bytes",
 				i, len(hints[i].Value))
+		}
+	}
+}
+
+// defaultHints is the hint list an unconfigured realm sends.
+//
+// Upstream's order, and the first element is the surprise: an *empty*
+// PA-FX-FAST, which get_preauth_hint_list adds before anything else
+// (kdc/kdc_preauth.c:999-1001) and which is how a client learns it
+// may upgrade this exchange to FAST. Then the etype-info, then the
+// factor. The cookie last is upstream's: prepare_error_as appends one
+// to every AS refusal carrying hints, with no condition on FAST
+// (do_as_req.c:785-796).
+//
+// **No PA-SPAKE**, because a realm offers none by default:
+// DEFAULT_GROUPS_KDC is the empty string where DEFAULT_GROUPS_CLIENT
+// is "edwards25519" (plugins/preauth/spake/groups.c:59-60), so a
+// stock KDC advertises nothing until configured. Matching that
+// default is what keeps this list identical to a stock one's, and the
+// differential case is what insisted on it.
+func defaultHints() []int32 {
+	return []int32{
+		wire.PAFXFast, wire.PAETypeInfo2,
+		wire.PAEncTimestamp, wire.PAFXCookie,
+	}
+}
+
+// assertHintTypes checks a hint list's types in order.
+func assertHintTypes(
+	t *testing.T,
+	hints []wire.PAData,
+	want []int32,
+) {
+	t.Helper()
+	for i, w := range want {
+		if hints[i].Type != w {
+			t.Errorf("hint %d is type %d, want %d",
+				i, hints[i].Type, w)
 		}
 	}
 }

@@ -336,3 +336,30 @@ func CtxTagOf(b []byte) (int, []byte, bool) {
 	}
 	return tag, b[hdr : hdr+n], true
 }
+
+// CtxRaw is CtxWrap as an asn1.RawValue, for a passthrough struct
+// field.
+func CtxRaw(tag int, body []byte) asn1.RawValue {
+	return ctxWrap(tag, body)
+}
+
+// CtxContent is the contents of a context-tagged passthrough field,
+// whichever way round encoding/asn1 left it.
+//
+// It exists because the two directions are not symmetric and the
+// asymmetry is silent. On *encoding*, a RawValue's FullBytes is
+// emitted verbatim and the field's `explicit' tag is ignored, so the
+// tag has to be inside FullBytes already. On *decoding*, the whole
+// tagged element lands in FullBytes and its contents in Bytes. So a
+// value built by CtxRaw has empty Bytes and a value just decoded has
+// both -- and a reader that picked either one alone would work in one
+// direction and silently return nothing in the other.
+func CtxContent(r asn1.RawValue) []byte {
+	if len(r.Bytes) != 0 {
+		return r.Bytes
+	}
+	if _, body, ok := CtxTagOf(r.FullBytes); ok {
+		return body
+	}
+	return nil
+}

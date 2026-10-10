@@ -245,6 +245,9 @@ func routes(
 		Paths:     c.Paths,
 		AdminACL:  c.AdminACL,
 
+		SPAKEGroups:     c.SPAKEGroups,
+		SPAKEIndicators: c.SPAKEIndicators,
+
 		Hosts:             c.Hosts,
 		HostBasedServices: c.HostBasedServices,
 		NoHostReferral:    c.NoHostReferral,

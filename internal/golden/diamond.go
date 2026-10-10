@@ -9,6 +9,7 @@ import (
 
 	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
 	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
+	"github.com/FatmanUK/kerberos_diamond/internal/spake"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 	"gorm.io/driver/postgres"
@@ -102,8 +103,22 @@ func StartDiamondAt(
 		ClockSkew: 5 * time.Minute,
 		Now:       now,
 		Hosts:     referralHosts(),
+
+		// The same SPAKE groups realm-setup.sh gives the
+		// oracle's spake_preauth_groups. Both halves are
+		// configured explicitly because **neither offers any
+		// by default** -- DEFAULT_GROUPS_KDC is the empty
+		// string -- so a realm left alone advertises nothing
+		// and the comparison could never reach the mechanism.
+		SPAKEGroups: GoldenSPAKEGroups(),
 	}
 	return d, nil
+}
+
+// GoldenSPAKEGroups is the SPAKE groups both halves of the comparison
+// are given.
+func GoldenSPAKEGroups() []int32 {
+	return []int32{spake.GroupEdwards25519}
 }
 
 func (d *Diamond) open(

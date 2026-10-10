@@ -130,3 +130,57 @@ func UnmarshalPAPACRequest(b []byte) (bool, error) {
 	}
 	return d.IncludePAC, nil
 }
+
+// SecureCookie is what an MIT1 FAST cookie holds once decrypted
+// (asn1_k_encode.c:1688-1696).
+//
+// A KDC that keeps no per-request state has to put a multi-round-trip
+// mechanism's state somewhere, and this is where: encrypted under a
+// key only the KDC can derive, handed to the client, and handed back.
+// So the state travels with the client rather than being remembered
+// -- which is the crash-only rule applied to pre-authentication, and
+// is the reason SPAKE works at all on a KDC that can be killed
+// between the challenge and the response.
+type SecureCookie struct {
+	// Time is when the cookie was made, which bounds how long it
+	// is good for.
+	Time time.Time
+
+	// Data is the padata each mechanism stored, keyed by type.
+	Data []PAData
+}
+
+type derSecureCookie struct {
+	Time time.Time   `asn1:"explicit,generalized,tag:0"`
+	Data []derPAData `asn1:"explicit,tag:1"`
+}
+
+// MarshalSecureCookie encodes a cookie's plaintext.
+func MarshalSecureCookie(c SecureCookie) ([]byte, error) {
+	d := derSecureCookie{
+		Time: c.Time.UTC().Truncate(time.Second),
+	}
+	for _, p := range c.Data {
+		d.Data = append(d.Data, derPAData{
+			Type: p.Type, Value: p.Value,
+		})
+	}
+	return asn1.Marshal(d)
+}
+
+// UnmarshalSecureCookie decodes it.
+func UnmarshalSecureCookie(
+	b []byte,
+) (SecureCookie, error) {
+	var d derSecureCookie
+	if _, err := asn1.Unmarshal(b, &d); err != nil {
+		return SecureCookie{}, derErr("SecureCookie", err)
+	}
+	out := SecureCookie{Time: d.Time}
+	for _, p := range d.Data {
+		out.Data = append(out.Data, PAData{
+			Type: p.Type, Value: p.Value,
+		})
+	}
+	return out, nil
+}

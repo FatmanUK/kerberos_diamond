@@ -41,6 +41,12 @@ type fastState struct {
 	// It is chosen when the reply is assembled, not when the
 	// request is read.
 	strengthen []byte
+
+	// innerBody is the inner KDC-REQ-BODY's encoded octets, which
+	// is what a pre-authentication mechanism hashes -- *not* the
+	// outer body in the request's raw message. See
+	// wire.KrbFastReq.BodyDER.
+	innerBody []byte
 }
 
 // findFastTGS unwraps a FAST-armored TGS request, if this is one.

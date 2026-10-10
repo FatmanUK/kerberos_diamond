@@ -189,8 +189,16 @@ Everything the plan file listed is done, so this list is now the live one.
    to end without `kdiamond-proxy` in the way.~~ Done, with a second,
    clearly-labelled image — see §3.3's narrowing of the no-OpenSSL rule
    and §6.
-7. **The Windows PAC**, last but one.
-8. **S4U2Self and S4U2Proxy**, last.
+7. **The standard-Kerberos gaps a survey of the C turned up**, none of
+   which were on this list and several of which were live divergences.
+   Done: KDB aliases and the AS-path canonicalisation they made
+   reachable; enterprise names and the AS exchange's `WRONG_REALM`
+   referral; `supported_enctypes`; the anonymous refusal;
+   authorization data and the `AD-MANDATORY-FOR-KDC` element it was
+   ignoring; CAMMAC and authentication indicators; SPAKE. Camellia is
+   the one left, and it is the only *non-deprecated* enctype gap.
+8. **The Windows PAC**, last but one.
+9. **S4U2Self and S4U2Proxy**, last.
 
 ## 3. Project State
 
@@ -251,6 +259,18 @@ The layout is filled in; §1 says what each package does.
   the enctype every service ticket is encrypted with. The golden harness
   configures both halves explicitly, with the same four in the same
   order, for exactly that reason.
+- **SPAKE is offered only when configured, which is upstream's
+  default and not a cautious reading of it.** `DEFAULT_GROUPS_KDC` is
+  the empty string where `DEFAULT_GROUPS_CLIENT` is `edwards25519`
+  (`plugins/preauth/spake/groups.c:59-60`), so a stock realm
+  advertises nothing until `spake_preauth_groups` is set while every
+  stock client is ready to do it. `KD_SPAKE_GROUPS` is this project's
+  spelling, and the asymmetry is the right way round: a KDC that
+  silently started demanding an extra round trip of every client
+  would be a surprise, and a client that is merely willing costs
+  nothing. Only `edwards25519` is available — the NIST groups are
+  what upstream needs OpenSSL for, so a realm asking for one is told
+  so rather than quietly given a different group.
 - **An anonymous request is refused, not downgraded.**
   `KDC_OPT_REQUEST_ANONYMOUS` requires the client to be
   `WELLKNOWN/ANONYMOUS` and then forces pre-authentication

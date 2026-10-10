@@ -41,6 +41,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 
 	"filippo.io/edwards25519"
 )
@@ -257,4 +258,70 @@ func Hash(parts ...[]byte) []byte {
 		h.Write(p)
 	}
 	return h.Sum(nil)
+}
+
+// Bytes serialises a private scalar, so that a KDC keeping no state
+// can put it in a cookie and get it back.
+//
+// It is the **unshifted** scalar, which is this package's
+// representation and not upstream's -- see Private. The two are not
+// interchangeable, so a cookie written by this KDC is readable by
+// this KDC and not by a C one. That costs nothing: a cookie is opaque
+// to the client, encrypted under a key only the issuing realm holds,
+// and upstream already ignores any cookie it did not make.
+func (p *Private) Bytes() []byte {
+	return p.s.Bytes()
+}
+
+// PrivateFromBytes reads one back.
+func PrivateFromBytes(b []byte) (*Private, error) {
+	s, err := new(edwards25519.Scalar).SetCanonicalBytes(b)
+	if err != nil {
+		return nil, err
+	}
+	return &Private{s: s}, nil
+}
+
+// GroupByName looks a group up by the name krb5.conf uses (find_gnum
+// over the IANA registry, groups.c).
+func GroupByName(name string) (int32, bool) {
+	if name == "edwards25519" {
+		return GroupEdwards25519, true
+	}
+	return 0, false
+}
+
+// ParseGroups reads a spake_preauth_groups value: a list of group
+// names separated by spaces or commas.
+//
+// **An empty value means none, and that is upstream's default for a
+// KDC.** DEFAULT_GROUPS_KDC is the empty string and
+// DEFAULT_GROUPS_CLIENT is "edwards25519" (groups.c:59-60), so a
+// stock realm does not offer SPAKE until it is configured to, while
+// every stock client is ready to do it. The asymmetry is the right
+// way round: a KDC that silently started demanding an extra round
+// trip of every client would be a surprise, and a client that is
+// merely willing costs nothing.
+//
+// The NIST groups are refused by name rather than ignored. They are
+// what upstream needs OpenSSL for, so a realm configured with one
+// would be configured for something this KDC cannot do, and saying so
+// beats quietly offering a different group.
+func ParseGroups(s string) ([]int32, error) {
+	var out []int32
+	for _, f := range strings.FieldsFunc(s, isGroupSep) {
+		g, ok := GroupByName(f)
+		if !ok {
+			return nil, fmt.Errorf(
+				"spake: group %q is not available "+
+					"here", f)
+		}
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// isGroupSep splits on spaces and commas, as krb5.conf lists do.
+func isGroupSep(r rune) bool {
+	return r == ' ' || r == ',' || r == '\t' || r == '\n'
 }

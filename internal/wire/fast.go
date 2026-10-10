@@ -102,6 +102,23 @@ type KrbFastReq struct {
 	Options Flags
 	PAData  []PAData
 	Body    KDCReqBody
+
+	// BodyDER is the inner KDC-REQ-BODY's **encoded** octets,
+	// kept because several derivations hash them and a
+	// re-encoding will not do: DER is canonical, but a peer that
+	// encoded something a shade differently still hashes its own
+	// bytes.
+	//
+	// Inside FAST this is the body that matters, and it is not
+	// the one in the request's raw octets: after a tunnel is
+	// unwrapped a KDC holds the *inner* body in its struct and
+	// the *outer* body in its raw message, and a derivation that
+	// reached for the wrong one agrees with nobody. Upstream
+	// hands its preauth modules exactly this -- rock->inner_body,
+	// pulled out of the decrypted plaintext with fetch_asn1_field
+	// (fast_util.c:197-203) and returned by the request_body
+	// callback (kdc_preauth.c:398-401). SPAKE is where it bites.
+	BodyDER []byte
 }
 
 type derKrbFastReq struct {
@@ -339,6 +356,7 @@ func (d derKrbFastReq) value() (KrbFastReq, error) {
 	return KrbFastReq{
 		Options: opts,
 		PAData:  paDataValues(d.PAData),
+		BodyDER: d.Body.Bytes,
 		Body:    b,
 	}, nil
 }

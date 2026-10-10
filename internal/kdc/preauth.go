@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/kerberos_diamond/internal/spake"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
@@ -25,6 +26,21 @@ func (k *KDC) preauth(s *asState) *wire.KRBError {
 	if !s.client.RequiresPreAuth() {
 		return nil
 	}
+	// SPAKE first, because it is the only mechanism here that
+	// spans more than one round trip: a request carrying one is
+	// *continuing* an exchange, where the other factors are
+	// alternatives to starting one.
+	//
+	// It is offered armored or not. Upstream's plugin declares no
+	// flags function at all (kdcpreauth_spake_initvt,
+	// spake_kdc.c:542-562), so it has no armor requirement --
+	// worth saying because the value of SPAKE is usually
+	// described in terms of FAST, and the two are independent.
+	if sp := findPAData(
+		s.req.PAData, spake.PAType); sp != nil &&
+		len(k.SPAKEGroups) > 0 {
+		return k.spakePreauth(s, sp.Value)
+	}
 	// Inside a tunnel the factor is an encrypted challenge, and a
 	// timestamp is not offered. Upstream still *accepts* a
 	// timestamp that arrives inside one -- ec_verify has the
@@ -39,6 +55,12 @@ func (k *KDC) preauth(s *asState) *wire.KRBError {
 		}
 		return nil
 	}
+	return k.timestampPreauth(s)
+}
+
+// timestampPreauth is the unarmored factor, and the refusal that asks
+// for one when nothing acceptable arrived.
+func (k *KDC) timestampPreauth(s *asState) *wire.KRBError {
 	ts := findPAData(s.req.PAData, wire.PAEncTimestamp)
 	if ts == nil {
 		return k.preauthRequired(s)
@@ -105,6 +127,7 @@ func (k *KDC) hintList(s *asState) ([]wire.PAData, error) {
 		{Type: wire.PAFXFast},
 		{Type: wire.PAETypeInfo2, Value: info},
 	}
+	out = append(out, k.spakeHint()...)
 	if s.fast == nil {
 		out = append(out,
 			wire.PAData{Type: wire.PAEncTimestamp})
@@ -126,6 +149,32 @@ func (k *KDC) hintList(s *asState) ([]wire.PAData, error) {
 	// any non-empty e-data there (fast.c:493-497). It is sent in
 	// both cases because upstream sends it in both.
 	return append(out, fastCookie()), nil
+}
+
+// spakeHint advertises SPAKE, or nothing when the realm offers no
+// groups.
+//
+// **It goes before the timestamp or the challenge**, and that is the
+// order the modules are registered in rather than a preference:
+// get_preauth_hint_list walks preauth_systems in order, and spake is
+// registered ahead of encrypted_challenge and encrypted_timestamp
+// (kdc_preauth.c:134-141). It matters because a client takes the
+// first mechanism it understands, so the order *is* the KDC's
+// preference as far as the client is concerned -- and the
+// differential case is what insisted on it: this list had SPAKE last
+// and the oracle's had it third.
+//
+// The value is empty, which says the mechanism is available and
+// nothing more. Upstream's spake_edata returns an empty padata
+// whenever no optimistic challenge is configured (:316-323), and this
+// KDC configures none: an optimistic challenge saves a round trip by
+// guessing the group before the client has said what it has, and
+// guessing wrong costs two.
+func (k *KDC) spakeHint() []wire.PAData {
+	if len(k.SPAKEGroups) == 0 {
+		return nil
+	}
+	return []wire.PAData{{Type: spake.PAType}}
 }
 
 // etypeInfo2 builds the single ETYPE-INFO2 entry the hint list

@@ -209,6 +209,23 @@ EOF
 	kdc_listen = ""
 	kdc_tcp_listen = $KRB5_KDC_PORT
 
+# spake_preauth_groups is set, and it has to be set here rather than
+# left at the default, because **a KDC offers no SPAKE groups by
+# default**: DEFAULT_GROUPS_KDC is the empty string where
+# DEFAULT_GROUPS_CLIENT is "edwards25519"
+# (plugins/preauth/spake/groups.c:59-60). So a realm left alone
+# advertises nothing and the comparison could never reach the
+# mechanism.
+#
+# It belongs in [libdefaults] rather than [realms] -- group_init_state
+# reads it from there (:227-231) -- and this file is prepended to the
+# KDC's profile, so putting it here reaches the KDC without reaching
+# the clients that share krb5.conf. edwards25519 only: the NIST
+# groups are what upstream needs OpenSSL for, and this image has
+# none.
+[libdefaults]
+	spake_preauth_groups = edwards25519
+
 [domain_realm]
 	.$KRB5_REFERRAL_DOMAIN = $KRB5_FOREIGN_REALM
 

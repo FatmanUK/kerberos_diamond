@@ -23,6 +23,7 @@ import (
 
 	"github.com/FatmanUK/kerberos_diamond/internal/acl"
 	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
+	"github.com/FatmanUK/kerberos_diamond/internal/spake"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/transit"
 )
@@ -99,6 +100,22 @@ type Config struct {
 	// first entry is the enctype every service ticket is
 	// encrypted with.
 	Enctypes store.SupportedEnctypes
+
+	// SPAKEGroups are the SPAKE groups this realm offers, empty
+	// meaning the mechanism is not offered at all -- which is
+	// upstream's default for a KDC and not for a client
+	// (DEFAULT_GROUPS_KDC against DEFAULT_GROUPS_CLIENT,
+	// plugins/preauth/spake/groups.c:59-60).
+	SPAKEGroups []int32
+
+	// SPAKEIndicators are the authentication indicators a
+	// successful SPAKE exchange asserts, which is upstream's
+	// per-realm spake_preauth_indicator. Without one SPAKE still
+	// strengthens the reply key and still says nothing about it
+	// in the ticket, so a realm that wants services to be able to
+	// *insist* on SPAKE needs both this and require_auth on those
+	// services.
+	SPAKEIndicators []string
 
 	// Hosts maps a host name to the realm that serves it,
 	// krb5.conf's [domain_realm] in one line. It exists for the
@@ -256,6 +273,13 @@ func (c *Config) parseTables() []error {
 	} else {
 		c.AdminACL = list
 	}
+	return append(errs, c.parseCrypto()...)
+}
+
+// parseCrypto reads the two structured variables that say what
+// cryptography a realm creates and offers.
+func (c *Config) parseCrypto() []error {
+	var errs []error
 	types, err := store.ParseEnctypes(
 		os.Getenv("KD_SUPPORTED_ENCTYPES"))
 	if err != nil {
@@ -264,6 +288,18 @@ func (c *Config) parseTables() []error {
 	} else {
 		c.Enctypes = types
 	}
+	groups, err := spake.ParseGroups(
+		os.Getenv("KD_SPAKE_GROUPS"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf(
+			"KD_SPAKE_GROUPS: %w", err))
+	} else {
+		c.SPAKEGroups = groups
+	}
+	// Indicators are free text and cannot be malformed: they are
+	// compared against a service's require_auth as strings.
+	c.SPAKEIndicators = strings.Fields(
+		os.Getenv("KD_SPAKE_INDICATORS"))
 	return errs
 }
 

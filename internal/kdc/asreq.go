@@ -151,18 +151,29 @@ func (k *KDC) AS(
 	if code, status := k.keys(s); code != 0 {
 		return nil, k.fastErrorAS(s, code, status)
 	}
-	if e := k.preauth(s); e != nil {
-		k.audit(s, store.FailedPreauth)
-		return nil, k.wrapErr(s.fast, e, s.req.Body.Nonce)
+	if e := k.authenticateAS(s); e != nil {
+		return nil, e
 	}
-	k.audit(s, store.Succeeded)
-	// The server's require_auth, checked after pre-authentication
-	// because that is where an indicator would have come from
-	// (do_as_req.c:284, immediately after the preauth loop).
-	if code, status := checkIndicators(
-		s.server, s.indicators); code != 0 {
-		return nil, k.fastErrorAS(s, code, status)
+	return k.issue(s)
+}
+
+// authenticateAS runs the factors and the server's demand, turning
+// either refusal into the armored error a client expects.
+func (k *KDC) authenticateAS(s *asState) *wire.KRBError {
+	code, status, e := k.authenticate(s)
+	switch {
+	case e != nil:
+		return k.wrapErr(s.fast, e, s.req.Body.Nonce)
+	case code != 0:
+		return k.fastErrorAS(s, code, status)
 	}
+	return nil
+}
+
+// issue builds the reply once the client is authenticated.
+func (k *KDC) issue(
+	s *asState,
+) (*wire.ASRep, *wire.KRBError) {
 	k.times(s)
 	if err := k.sessionKey(s); err != nil {
 		return nil, k.fastErrorAS(s, wire.ErrCodeGeneric,
@@ -174,6 +185,25 @@ func (k *KDC) AS(
 			"ENCODE_REPLY")
 	}
 	return rep, nil
+}
+
+// authenticate runs the pre-authentication factors and then the
+// server's own demand about how the client authenticated.
+//
+// The order is upstream's: the factors first, the audit next, and
+// check_indicators immediately after the preauth loop
+// (do_as_req.c:284). A service's require_auth is a question about
+// what just happened, so it cannot be asked before it happens.
+func (k *KDC) authenticate(
+	s *asState,
+) (int32, string, *wire.KRBError) {
+	if e := k.preauth(s); e != nil {
+		k.audit(s, store.FailedPreauth)
+		return 0, "", e
+	}
+	k.audit(s, store.Succeeded)
+	code, status := checkIndicators(s.server, s.indicators)
+	return code, status, nil
 }
 
 // fastErrorAS is krbError, wrapped in the tunnel when there is one.

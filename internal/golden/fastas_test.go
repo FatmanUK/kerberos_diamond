@@ -360,6 +360,14 @@ func TestStockKinitFASTAgainstTheGoKDC(t *testing.T) {
 	defer cancel()
 
 	env := pointAtDiamond(t, ctx, o, "fast", true)
+	// SPAKE off for this case, because what it tests is the
+	// **encrypted challenge** -- and a client takes the first
+	// mechanism it understands, so a realm offering SPAKE gets
+	// SPAKE and this case would stop covering what it is for. Off
+	// is also the default a realm has until it is configured
+	// (DEFAULT_GROUPS_KDC, groups.c:59-60), so this is an
+	// ordinary realm rather than a contrived one.
+	withoutSPAKE(t)
 	armor := "/realm/fast-armor.ccache"
 	out, err := o.ExecEnv(ctx,
 		append(env, "KRB5CCNAME="+armor),
@@ -521,6 +529,9 @@ func TestStockKinitFindsFASTFromTheCache(t *testing.T) {
 	defer cancel()
 
 	env := pointAtDiamond(t, ctx, o, "avail", true)
+	// Off for the same reason as the case above: this one is
+	// about the encrypted challenge too.
+	withoutSPAKE(t)
 	armor := "/realm/avail-armor.ccache"
 	out, err := o.ExecEnv(ctx,
 		append(env, "KRB5CCNAME="+armor),
@@ -537,5 +548,99 @@ func TestStockKinitFindsFASTFromTheCache(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Errorf("no %q in the trace, so the advertisement "+
 			"did not reach the cache:\n%s", want, out)
+	}
+}
+
+// withoutSPAKE turns SPAKE off on the Go KDC the test just started.
+//
+// The harness turns it **on** by default so that the differential
+// hint-list cases have something to compare -- the oracle's kdc.conf
+// sets spake_preauth_groups, and both halves have to agree -- but a
+// stock-client case about some *other* factor has to turn it off,
+// because a client takes the first mechanism it understands and SPAKE
+// is offered first.
+//
+// That is not a contrivance: off is the default a realm has until it
+// is configured (DEFAULT_GROUPS_KDC is the empty string where
+// DEFAULT_GROUPS_CLIENT is "edwards25519",
+// plugins/preauth/spake/groups.c:59-60).
+func withoutSPAKE(t *testing.T) {
+	t.Helper()
+	diamondOf(t).KDC.SPAKEGroups = nil
+}
+
+// TestStockKinitSPAKEInsideFAST is D7's stock-client anchor: an
+// unmodified kinit runs the whole SPAKE exchange and gets a ticket.
+//
+// It is the case the published vectors cannot reach. They pin every
+// derivation against fixed scalars; this pins that a real client,
+// choosing its own scalars, deriving its own multiplier from its own
+// password and encoding its own messages, ends up with the same keys
+// -- and the reply only opens with K'[0], so the ticket arriving is
+// the assertion.
+//
+// **It also found the last bug in the step.** The exchange ran to
+// completion and the client then reported "Password incorrect",
+// because inside FAST the KDC was hashing the *outer* request body
+// into the derivation and the client was hashing the inner one. The
+// two differ after the first round trip -- the outer body is encoded
+// once per restart, before the nonce and the times are set, and the
+// inner one is re-encoded every round trip (get_in_tkt.c:805-838
+// against :1272-1286) -- so they were 139 octets against 142. No
+// in-process test could have caught it: both sides of one would have
+// used whichever body the implementation chose.
+func TestStockKinitSPAKEInsideFAST(t *testing.T) {
+	o := oracle(t)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), 60*time.Second)
+	defer cancel()
+
+	env := pointAtDiamond(t, ctx, o, "spakefast", true)
+	armor := "/realm/spake-armor.ccache"
+	out, err := o.ExecEnv(ctx,
+		append(env, "KRB5CCNAME="+armor),
+		UserPassword+"\n", "kinit", UserName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("the armor kinit failed: %v\n%s", err, out)
+	}
+	out, err = o.ExecEnv(ctx, env, UserPassword+"\n",
+		"kinit", "-T", armor, PreauthName+"@"+Realm)
+	if err != nil {
+		t.Fatalf("kinit -T failed: %v\n%s", err, out)
+	}
+	assertUsedSPAKE(t, out)
+	assertTicket(t, ctx, o, env, PreauthName)
+}
+
+// assertUsedSPAKE reads the client's trace for the steps that say the
+// exchange really happened.
+//
+// Every line is the client's own report: it sent a support message,
+// received a challenge naming a group and a public element, generated
+// its own, computed a shared result and a transcript hash, and sent a
+// response. A KDC that got any derivation wrong would have failed the
+// factor and the client would have said "Password incorrect" instead.
+func assertUsedSPAKE(t *testing.T, trace string) {
+	t.Helper()
+	for _, want := range []string{
+		"Sending SPAKE support message",
+		"SPAKE challenge received with group 1",
+		"SPAKE key generated with pubkey",
+		"SPAKE algorithm result",
+		"SPAKE final transcript hash",
+		"Sending SPAKE response",
+		"spake (151) (real) returned: 0/Success",
+		"Decrypted AS reply",
+	} {
+		if !strings.Contains(trace, want) {
+			t.Errorf("no %q in the trace:\n%s", want,
+				trace)
+		}
+	}
+	// And the cookie was a real one, not the three constant
+	// octets: SPAKE is the first mechanism here with state to put
+	// in it.
+	if !strings.Contains(trace, "Received cookie: MIT1") {
+		t.Errorf("no MIT1 cookie in the trace:\n%s", trace)
 	}
 }

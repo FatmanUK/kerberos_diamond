@@ -177,6 +177,7 @@ func (k *KDC) openFastAS(
 	if code != 0 {
 		return code, status
 	}
+	f.innerBody = fr.BodyDER
 	s.fast = f
 	s.req.Body = fr.Body
 	s.req.PAData = fr.PAData
