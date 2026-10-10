@@ -203,7 +203,9 @@ Everything the plan file listed is done, so this list is now the live one.
    6803 camellia pair, which closes the only *non-deprecated* enctype
    gap. Everything upstream still supports and this project does not is
    deprecated, weak, or both.
-8. **The Windows PAC**, last but one.
+8. **The Windows PAC**, last but one. The container itself is
+   implemented and anchored against bytes three generations of Windows
+   KDC produced — see §3.1 — but the KDC does not issue one yet.
 9. **S4U2Self and S4U2Proxy**, last.
 
 ## 3. Project State
@@ -429,6 +431,50 @@ are not "fixed" back by accident.
   pair goes last in both: putting it first would re-seal every ticket in
   every existing case.
 
+**The Windows PAC, as a container:**
+
+- **It is a framing format with checksums over it, and nothing more.**
+  `internal/pac` parses and builds the PACTYPE header and the
+  PAC_INFO_BUFFER table — little-endian, in a protocol that is big-endian
+  everywhere else, with 64-bit offsets even though a `uint32` bounds the
+  whole encoding — and treats every payload but `CLIENT_INFO` as opaque
+  bytes. That is upstream's shape and not a shortcut: `authdata.h:45-48`
+  says of itself that decoding buffer contents is left to the application,
+  and `pac.c` contains no NDR at all.
+- **The format grows from the middle**, which is the whole difficulty of
+  `Add`: a new buffer costs sixteen more octets of table, so every existing
+  payload moves sixteen octets later and every recorded offset moves with
+  it (`k5_pac_add_buffer`, `pac.c:39-105`). The payload is then zero-padded
+  to a multiple of eight while the recorded size stays **unpadded**, so the
+  padding is implicit in where the next buffer starts and a reader trusting
+  the gap between offsets would read padding as content.
+- **Four checksums, and the order they are computed in is load-bearing.**
+  Three zero-filled buffers go in first, then the header is encoded *into*
+  the data so that it is inside everything signed, and only then is each
+  checksum computed — full, then server, then privsvr — each covering the
+  ones written before it. The privsvr checksum covers **only the server
+  checksum's own octets**, which makes it a signature over a signature: a
+  KDC can confirm it vouched for a PAC without re-reading any contents.
+- **The ticket checksum is circular and upstream breaks the circle with a
+  dummy.** The PAC carries a checksum over the ticket and the ticket
+  carries the PAC, so the ticket is encoded with a PAC element of one zero
+  octet, that is signed, and the real PAC is swapped in
+  (`krb5_kdc_sign_ticket`, `pac_sign.c:366-425`). Both sides have to agree
+  on the placeholder exactly, and the PAC therefore ends up **first** in
+  the authorization-data list.
+- **`CKSUMTYPE_SHA1` in the server checksum is refused outright**
+  (`pac.c:496-498`), which is an attack and not tidiness: an unkeyed
+  checksum is one anybody can compute, and the server checksum is the one
+  checked against a key the client may not hold. The checksum's length also
+  comes from its *type* and never from the buffer, because [MS-PAC] 2.8
+  allows an RODCIdentifier trailer after it.
+- **`crypto.ProfileForCksum` exists for this and nothing else yet.** There
+  is no checksum table in this project, because every keyed checksum a
+  Kerberos message carries is the one its enctype requires. A PAC is the
+  first thing that names its own checksum type per buffer, so it needs the
+  lookup in the other direction — and the right answer for a type this
+  project does not implement is "unsupported" rather than a wrong verdict.
+
 **The TGS exchange:**
 
 - **Everything but S4U and cross-realm issues a ticket.** A client spends a
@@ -562,6 +608,11 @@ are not "fixed" back by accident.
   — so the comparison covers the whole reply with no skipped fields, and the
   gap is recorded here instead of hidden in an exemption. A Windows client
   expecting a PAC will not be satisfied by this KDC yet.
+
+  `internal/pac` now implements the container, the CLIENT_INFO buffer and
+  all four checksums, and verifies against PACs issued by Windows Server
+  2003, 2008 and 2022 — but nothing attaches one to a ticket, so the
+  paragraph above still describes what a client sees.
 - **FAST is implemented and advertised, both exchanges.** Announced in both
   the places upstream announces it: an empty `PA-FX-FAST` leading the preauth
   hint list (`kdc/kdc_preauth.c:999-1001`), which is what lets `kinit -T`
@@ -876,6 +927,30 @@ tests. It is green.
   rather than asserting them, and says in its own header comment that it does
   not even compile. The real check arrives with the AS exchange, when the C
   client has to decrypt a reply this code encrypted.
+- **`internal/pac`** — covered, and anchored by bytes **no Kerberos
+  implementation produced**. Every fixture came off a Windows KDC: a PAC
+  from Windows Server 2003 by way of Samba's regression suite, four
+  S4U2Self PACs captured from a Windows Server 2008 KDC, and a complete
+  1307-octet ticket from Windows Server 2022. The strongest of them is
+  upstream's own: strip the 2022 ticket's authorization data, re-sign the
+  PAC, and the element comes back **byte for byte** what Microsoft
+  produced. That single comparison pins the buffer order, the eight-octet
+  padding, the in-place header encoding, the zero-fill-then-sign order, the
+  key usage, and — because the ticket checksum covers a re-encoded
+  `EncTicketPart` — this project's DER encoder against a Windows one. A
+  control case re-signs with the krbtgt key one bit out and requires the
+  element to differ, so the comparison cannot pass for the wrong reason.
+  Plus the two fuzzing-corpus blobs, which must be refused, and the
+  refusals a round trip cannot reach: a tampered octet, an unkeyed server
+  checksum, a duplicate buffer type.
+- **One PAC gap, recorded.** The Windows 2003 blob's checksums are
+  unverifiable here, because both of its keys are **arcfour-hmac** — a
+  declared non-goal. It anchors the framing and the CLIENT_INFO buffer
+  only. The four S4U PACs cannot be re-signed in place either: their
+  privsvr buffer is sized for an arcfour checksum and upstream re-signs
+  them with an arcfour key for exactly that reason (`t_pac.c:511-512`), so
+  the rebuild-from-payloads path stands in, which is check_pac's own
+  second half.
 - **`internal/wire`** — covered, and anchored the same way: every message the
   AS exchange touches is decoded from `tests/asn.1/reference_encode.out` and
   re-encoded to byte-identical octets. That file is output from upstream's own

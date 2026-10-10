@@ -270,6 +270,7 @@ There are no exemptions now. Every field of every case is compared.
 | `internal/config` | the environment, and nothing else |
 | `internal/crypto` | RFC 3961/3962, RFC 8009 and RFC 6803 enctypes |
 | `internal/camellia` | the Camellia block cipher and CMAC |
+| `internal/pac` | the Windows PAC container and its checksums |
 | `internal/wire` | ASN.1/DER for the message types |
 | `internal/store` | the principal database |
 | `internal/transit` | the transited-realm field and realm paths |

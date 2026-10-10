@@ -344,6 +344,34 @@ func Profile(e EncType) (*EncProfile, error) {
 	return nil, fmt.Errorf("enctype %d: %w", e, ErrUnsupported)
 }
 
+// ProfileForCksum returns the row whose required checksum type is the
+// one named.
+//
+// A checksum type does not stand alone in this project the way it
+// does upstream: there is no checksum table, because every keyed
+// checksum any Kerberos message carries is the one its enctype
+// requires (krb5int_c_mandatory_cksumtype, mandatory_sumtype.c:29-39
+// returns exactly the row's required_ctype). So a checksum type
+// identifies a row, and the row's TrailerLength is what
+// krb5_c_checksum_length would answer.
+//
+// The PAC is the first thing that needs the lookup in this direction,
+// because a PAC's buffers each name their own checksum type and a
+// verifier has to honour what it was handed rather than recomputing
+// from the key it holds -- a PAC built by a Windows KDC under a key
+// this realm shares may still name a type this project does not
+// implement, and the right answer then is "unsupported" and not a
+// wrong verdict.
+func ProfileForCksum(c CksumType) (*EncProfile, error) {
+	for i := range profiles {
+		if profiles[i].RequiredCksum == c {
+			return &profiles[i], nil
+		}
+	}
+	return nil, fmt.Errorf("checksum type %d: %w",
+		c, ErrUnsupported)
+}
+
 // Supported lists the encryption types this package implements, most
 // preferred first.
 func Supported() []EncType {
