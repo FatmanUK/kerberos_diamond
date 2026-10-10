@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/keytab"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/keytab"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // ktadd writes a principal's keys into a keytab, which is kadmin's

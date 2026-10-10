@@ -1,7 +1,7 @@
 package pac
 
 import (
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // dummyPAC is the single zero octet that stands in for the PAC while

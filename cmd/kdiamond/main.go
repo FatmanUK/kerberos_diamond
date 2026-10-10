@@ -1,4 +1,4 @@
-// Command kdiamond is the Kerberos Diamond key distribution centre.
+// Command kdiamond is the Diamond KRB key distribution centre.
 package main
 
 import (
@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/config"
-	"github.com/FatmanUK/kerberos_diamond/internal/kadm5"
-	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/transport"
+	"github.com/FatmanUK/diamond_krb/internal/config"
+	"github.com/FatmanUK/diamond_krb/internal/kadm5"
+	"github.com/FatmanUK/diamond_krb/internal/kdc"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/transport"
 )
 
 // version is set at link time; see the Makefile's LDFLAGS.

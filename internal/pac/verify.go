@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // Verify checks the server and privsvr checksums, and the full

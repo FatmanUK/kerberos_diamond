@@ -1,9 +1,9 @@
 package kdc
 
 import (
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/spnego"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/spnego"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // contextFlags works out the GSS context flags from the

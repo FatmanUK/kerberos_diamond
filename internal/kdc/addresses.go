@@ -3,7 +3,7 @@ package kdc
 import (
 	"encoding/asn1"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // The addresses a TGS-issued ticket carries, from

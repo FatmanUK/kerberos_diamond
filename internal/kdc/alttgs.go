@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // findAlternateTGS answers a request for a trust this realm does not

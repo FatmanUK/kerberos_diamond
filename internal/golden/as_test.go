@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // requestedLife is how long a ticket the harness asks for. It is well

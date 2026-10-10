@@ -3,9 +3,9 @@ package kdc
 import (
 	"context"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // User-to-user authentication, KDC_OPT_ENC_TKT_IN_SKEY.

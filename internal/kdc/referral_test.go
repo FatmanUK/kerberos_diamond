@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/hostrealm"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // refRealm is the realm the map points at, and refHost a host in the

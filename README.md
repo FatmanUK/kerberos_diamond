@@ -1,11 +1,11 @@
-# Kerberos Diamond
+# Diamond KRB
 
 A from-scratch Go reimplementation of Kerberos 5, behaviour-compatible with
 the original — an unmodified `kinit` built from the MIT sources obtains a
 ticket from it and does not know the difference — while deliberately
 replacing six things that have aged worst in the C:
 
-| Kerberos 5 (C) | Kerberos Diamond (Go) |
+| Kerberos 5 (C) | Diamond (Go) |
 |---|---|
 | Manual memory management | Go, memory-safe |
 | Unencrypted connections | **TLS only** |
@@ -99,8 +99,8 @@ driver and `golang.org/x/crypto` for Argon2id.
 
 ```bash
 git clone --recurse-submodules \
-    https://github.com/FatmanUK/kerberos_diamond.git
-cd kerberos_diamond
+    https://github.com/FatmanUK/diamond_krb.git
+cd diamond_krb
 make certs db-up
 ```
 
@@ -322,3 +322,21 @@ original, which is what that file and this paragraph do.
 Kerberos is an MIT trademark, used here to name the protocol being
 implemented. MIT's notice requires prior written permission for commercial
 use of the mark.
+
+## Why not "Kerberos something"
+
+Because the mark belongs to MIT and this is a product in exactly its field,
+which is the strongest case for confusion there is. MIT's notice defines
+commercial use as "use of a name in a product or other for-profit manner",
+which most naturally reads as covering a product name whether or not money
+changes hands — and the files this work was ported from separately require
+derived software not to be distributed "in such a fashion that it might be
+confused with the original". Both point the same way, so the name does not
+carry the mark. Heimdal, the one other independent Kerberos 5
+implementation, made the same choice.
+
+`KRB` is not the trademark: it is the protocol's own abbreviation, in
+`krb5`, `krb5.conf`, `krbtgt`, `KRB-ERROR` and `KRB-PRIV`. And describing
+this as a Kerberos 5 implementation stays, because MIT's notice explicitly
+permits referring to the mark to convey information — which is what that is,
+and `NOTICE` gives the recognition it asks for in return.

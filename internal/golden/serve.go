@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/transport"
+	"github.com/FatmanUK/diamond_krb/internal/transport"
 )
 
 // Served is a running Go KDC with a shim in front of it.

@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/acl"
-	"github.com/FatmanUK/kerberos_diamond/internal/hostrealm"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/transit"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/acl"
+	"github.com/FatmanUK/diamond_krb/internal/hostrealm"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/transit"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // Clock is the KDC's source of time, injectable so that a test can

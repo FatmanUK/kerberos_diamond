@@ -1,9 +1,9 @@
 package kdc
 
 import (
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/pac"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/pac"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 	"testing"
 )
 

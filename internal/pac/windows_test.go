@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // aes256 is a key of the enctype all the verifiable fixtures use.

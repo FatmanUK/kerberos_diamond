@@ -3,8 +3,8 @@ package kdc
 import (
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // FAST, RFC 6113, the server half of kdc/fast_util.c.

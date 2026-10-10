@@ -3,7 +3,7 @@ package store
 import (
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 )
 
 // Upstream's default is the two RFC 3962 types and **not** the

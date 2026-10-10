@@ -3,10 +3,10 @@ package kdc
 import (
 	"errors"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/ndr"
-	"github.com/FatmanUK/kerberos_diamond/internal/pac"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/ndr"
+	"github.com/FatmanUK/diamond_krb/internal/pac"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // verifyHeaderPAC checks the PAC in the presented ticket, if it has

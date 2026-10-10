@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // Fields is one decoded exchange flattened to named, normalised

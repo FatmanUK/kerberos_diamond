@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // echoHandler answers every message with its bytes reversed, which is

@@ -1,9 +1,9 @@
 // Command kdiamond-proxy carries Kerberos messages over TLS for
 // clients that cannot do it themselves.
 //
-// Kerberos Diamond's KDC has no cleartext listener: it is an HTTPS
-// server speaking MS-KKDCP. A client reaches it directly only if it
-// was built with a TLS module — Kerberos 5 needs its k5tls plugin,
+// Diamond's KDC has no cleartext listener: it is an HTTPS server
+// speaking MS-KKDCP. A client reaches it directly only if it was
+// built with a TLS module — Kerberos 5 needs its k5tls plugin,
 // which in turn needs OpenSSL at build time. Clients built without
 // one point at this proxy instead, which listens for plain Kerberos
 // TCP and forwards each message to the KDC inside TLS.
@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/transport"
+	"github.com/FatmanUK/diamond_krb/internal/transport"
 )
 
 // version is set at link time; see the Makefile's LDFLAGS.

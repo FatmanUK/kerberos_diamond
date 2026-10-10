@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 )
 
 // A history of one means the current password alone, which is

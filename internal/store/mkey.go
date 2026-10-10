@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 )
 
 // ErrNoMasterKey reports a master key that was never derived.
@@ -16,12 +16,12 @@ var ErrWrongMKVNO = errors.New("unknown master key version")
 
 // MasterKey is the key every stored key is encrypted under.
 //
-// Kerberos Diamond keeps upstream's master-key indirection rather
-// than relying on database-level encryption, and the reason is the
-// threat model: a KDC assumes that reading the database is not the
-// same as holding every principal's long-term key, and a pg_dump of
-// plaintext key columns would end that assumption. The indirection is
-// kept; the stash file is not.
+// Diamond keeps upstream's master-key indirection rather than relying
+// on database-level encryption, and the reason is the threat model: a
+// KDC assumes that reading the database is not the same as holding
+// every principal's long-term key, and a pg_dump of plaintext key
+// columns would end that assumption. The indirection is kept; the
+// stash file is not.
 //
 // Instead the key is derived at startup from KD_MASTER_PASSWORD, by
 // string-to-key over the salt for K/M@REALM -- exactly what kdb5_util

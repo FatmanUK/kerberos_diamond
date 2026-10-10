@@ -3,7 +3,7 @@ package kdc
 import (
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // enterpriseRequest is an AS-REQ whose client name is a user

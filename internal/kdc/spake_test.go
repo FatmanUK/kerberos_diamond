@@ -3,9 +3,9 @@ package kdc
 import (
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/spake"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/spake"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // spakeKDC is a test KDC with SPAKE switched on.

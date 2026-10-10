@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 	"golang.org/x/crypto/argon2"
 )
 

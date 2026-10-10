@@ -3,8 +3,8 @@ package kdc
 import (
 	"context"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // checkS4USelf is the whole of S4U2Self's authorisation

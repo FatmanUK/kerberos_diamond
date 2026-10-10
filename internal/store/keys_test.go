@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 )
 
 // testMKey is a master key for the unit tests, derived the same way a

@@ -1,8 +1,8 @@
 package kdc
 
 import (
-	"github.com/FatmanUK/kerberos_diamond/internal/transit"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/transit"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // buildTransited computes the path the issued ticket will carry,

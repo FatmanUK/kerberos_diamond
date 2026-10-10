@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // alias points one principal name at another, which is kadmin's

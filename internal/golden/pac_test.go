@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // The two KDCs' PACs for an AS exchange are **byte for byte the

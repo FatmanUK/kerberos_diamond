@@ -2,13 +2,13 @@ package config
 
 import (
 	"errors"
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/acl"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/acl"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // setMinimal puts the variables that have no default into the

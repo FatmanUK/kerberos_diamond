@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 )
 
 // Argon2id is what this project writes, so the default has to be it.

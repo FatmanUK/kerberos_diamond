@@ -4,7 +4,7 @@ import (
 	"encoding/asn1"
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // hostAddresses is a HostAddresses SEQUENCE holding one IPv4 address,

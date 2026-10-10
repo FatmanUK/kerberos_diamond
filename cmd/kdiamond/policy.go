@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // The policy subcommands, which are kadmin's addpol, modpol, delpol,

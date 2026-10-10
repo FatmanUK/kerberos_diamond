@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // TestStockKpasswdAgainstTheGoKDC is the end-to-end check for the

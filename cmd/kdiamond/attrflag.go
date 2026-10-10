@@ -4,7 +4,7 @@ import (
 	"flag"
 	"strings"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // attrList collects repeated +name / -name attribute specifiers.

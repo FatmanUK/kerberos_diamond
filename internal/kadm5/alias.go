@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/acl"
+	"github.com/FatmanUK/diamond_krb/internal/acl"
 )
 
 // aliasReq is the alias verb's arguments.

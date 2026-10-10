@@ -3,7 +3,7 @@ package kdc
 import (
 	"strings"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // referralTGSName names the cross-realm ticket-granting service

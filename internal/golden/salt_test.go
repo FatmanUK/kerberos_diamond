@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 )
 
 // etypeInfo pulls the enctype and salt out of the client's trace line

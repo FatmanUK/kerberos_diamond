@@ -1,7 +1,7 @@
 package kdc
 
 import (
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // anonymousName is the well-known client name an anonymous request

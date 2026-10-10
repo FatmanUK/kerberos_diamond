@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

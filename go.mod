@@ -1,4 +1,4 @@
-module github.com/FatmanUK/kerberos_diamond
+module github.com/FatmanUK/diamond_krb
 
 go 1.26.5
 

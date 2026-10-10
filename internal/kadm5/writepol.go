@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/acl"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/acl"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // PolicyWrite is addpol's and modpol's arguments, with every field a

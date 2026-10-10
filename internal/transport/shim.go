@@ -10,7 +10,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // Shim accepts plain Kerberos TCP and forwards each message to a KDC

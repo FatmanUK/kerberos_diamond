@@ -1,4 +1,4 @@
-# BOOTSTRAP.md — Kerberos Diamond
+# BOOTSTRAP.md — Diamond KRB
 
 Written so a fresh agent — or a competing LLM — can resume this project after
 total loss of session state. If this file and the repo disagree, **the repo
@@ -13,7 +13,7 @@ A from-scratch **Go** reimplementation of **Kerberos 5**, behaviour-
 compatible with the original — while deliberately replacing six things
 that have aged worst in the C:
 
-| Kerberos 5 (C) | Kerberos Diamond (Go) |
+| Kerberos 5 (C) | Diamond (Go) |
 |---|---|
 | Manual memory management | Go, memory-safe |
 | Unencrypted connections | **TLS only** |

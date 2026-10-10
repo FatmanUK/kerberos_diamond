@@ -52,9 +52,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/acl"
-	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/acl"
+	"github.com/FatmanUK/diamond_krb/internal/kdc"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // Server answers the administrative route.

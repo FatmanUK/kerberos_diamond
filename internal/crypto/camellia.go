@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/camellia"
+	"github.com/FatmanUK/diamond_krb/internal/camellia"
 )
 
 // newCamellia is the block-cipher constructor for the RFC 6803 rows.

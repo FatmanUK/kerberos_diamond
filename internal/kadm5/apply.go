@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/acl"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/acl"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // apply writes a request's fields onto a principal, imposes the ACL's

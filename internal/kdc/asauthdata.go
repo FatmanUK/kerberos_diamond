@@ -1,8 +1,8 @@
 package kdc
 
 import (
-	"github.com/FatmanUK/kerberos_diamond/internal/pac"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/pac"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // asAuthData fills in an AS-issued ticket's authorization data:

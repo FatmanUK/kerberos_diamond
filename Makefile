@@ -1,4 +1,4 @@
-# Kerberos Diamond
+# Diamond KRB
 #
 # Quick start:
 #   make certs db-up run      run the KDC on the host
@@ -77,7 +77,7 @@ LDFLAGS     := -s -w -X main.version=$(VERSION)
 
 .PHONY: help
 help: ## Show this help
-	@echo "Kerberos Diamond"
+	@echo "Diamond KRB"
 	@echo
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / \
 		{printf "  \033[1m%-14s\033[0m %s\n", $$1, $$2}' \
@@ -407,7 +407,7 @@ golden-clean: golden-sweep ## Remove the oracle image and containers
 # --- running in a container -------------------------------------------
 
 PUBLISH_DATE  := $(shell date +%Y%m%d)
-PUBLISH_IMAGE ?= ghcr.io/fatmanuk/kerberos_diamond
+PUBLISH_IMAGE ?= ghcr.io/fatmanuk/diamond_krb
 PROXY_PUBLISH_IMAGE ?= ghcr.io/fatmanuk/kdiamond_proxy
 
 .PHONY: pod-build

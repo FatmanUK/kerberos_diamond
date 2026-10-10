@@ -4,7 +4,7 @@ import (
 	"encoding/asn1"
 	"errors"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // PAType is PA-SPAKE's padata number (KRB5_PADATA_SPAKE).

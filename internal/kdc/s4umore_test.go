@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // **An S4U2Self ticket carries no authentication indicator**, and the

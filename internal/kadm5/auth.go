@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/acl"
-	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
+	"github.com/FatmanUK/diamond_krb/internal/acl"
+	"github.com/FatmanUK/diamond_krb/internal/kdc"
 )
 
 // Caller is who asked, and what they are allowed.

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/pac"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/pac"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // pacShape renders a PAC for comparison: its buffer table, its

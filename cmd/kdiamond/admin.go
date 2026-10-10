@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/config"
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/config"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // The administration subcommands stand in for kadmin.

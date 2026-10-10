@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/transport"
+	"github.com/FatmanUK/diamond_krb/internal/transport"
 )
 
 // Direct is a Go KDC with **no shim in front of it**, published on

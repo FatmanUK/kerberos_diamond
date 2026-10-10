@@ -1,6 +1,6 @@
 package kdc
 
-import "github.com/FatmanUK/kerberos_diamond/internal/wire"
+import "github.com/FatmanUK/diamond_krb/internal/wire"
 
 // Cross-realm, and what the shape of it is.
 //

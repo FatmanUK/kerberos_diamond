@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
-	"github.com/FatmanUK/kerberos_diamond/internal/spnego"
+	"github.com/FatmanUK/diamond_krb/internal/kdc"
+	"github.com/FatmanUK/diamond_krb/internal/spnego"
 )
 
 // The gss-sample token flags (appl/gss-sample/gss-misc.h:43-52).

@@ -1,8 +1,8 @@
 package kdc
 
 import (
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // tgsFlagRule is one "this option needs that ticket flag" rule, as

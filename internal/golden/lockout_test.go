@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // TestStockKinitLocksOut is lockout end to end: a stock kinit with

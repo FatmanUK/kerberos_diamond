@@ -3,8 +3,8 @@ package kadm5
 import (
 	"context"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/acl"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/acl"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // canonical looks a principal up and authorises the operation against

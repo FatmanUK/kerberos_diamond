@@ -3,7 +3,7 @@ package kdc
 import (
 	"testing"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // pacOptions builds a PA-PAC-OPTIONS element with the given flags.

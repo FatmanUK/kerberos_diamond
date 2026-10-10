@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/kdc"
-	"github.com/FatmanUK/kerberos_diamond/internal/wire"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/kdc"
+	"github.com/FatmanUK/diamond_krb/internal/wire"
 )
 
 // realmTGT runs an AS exchange at one of the oracle's realms for one

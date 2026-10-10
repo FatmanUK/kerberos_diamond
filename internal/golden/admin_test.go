@@ -21,7 +21,7 @@ func buildKdiamond(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "kdiamond")
 	cmd := exec.Command("go", "build", "-o", bin,
-		"github.com/FatmanUK/kerberos_diamond/cmd/kdiamond")
+		"github.com/FatmanUK/diamond_krb/cmd/kdiamond")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building kdiamond: %v\n%s", err, out)
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"filippo.io/edwards25519"
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 )
 
 // vector is one of upstream's published SPAKE test vectors

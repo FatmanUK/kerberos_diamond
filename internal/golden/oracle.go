@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
-	"github.com/FatmanUK/kerberos_diamond/internal/store"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/store"
 )
 
 // OracleImage is the container holding Kerberos 5 built from the C

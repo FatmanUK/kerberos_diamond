@@ -3,7 +3,7 @@ package spake
 import (
 	"encoding/binary"
 
-	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/diamond_krb/internal/crypto"
 )
 
 // UsageSPAKE encrypts the response's factor field
