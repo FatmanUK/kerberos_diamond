@@ -1,7 +1,6 @@
 package crypto
 
 import (
-	"crypto/aes"
 	"encoding/binary"
 	"fmt"
 )
@@ -32,10 +31,11 @@ func usageConstant(u Usage, which byte) []byte {
 // which for one block is CBC with a zero IV -- see cts.go. That is
 // why the single-block quirk is load-bearing rather than a curiosity.
 func deriveRandom(
+	p *EncProfile,
 	key, constant []byte,
 	keyBytes int,
 ) ([]byte, error) {
-	block, err := aes.NewCipher(key)
+	block, err := p.newBlock(key)
 	if err != nil {
 		return nil, err
 	}
@@ -83,5 +83,5 @@ func deriveDK(
 			"key is %d bytes, want %d",
 			len(base), p.KeyLength)
 	}
-	return deriveRandom(base, label, outLen)
+	return deriveRandom(p, base, label, outLen)
 }

@@ -292,8 +292,11 @@ func TestETMTagIncludesTheIV(t *testing.T) {
 		t.Fatal(err)
 	}
 	ct := hx("000102030405060708090A0B0C0D0E0F")
-	if bytes.Equal(p.etmTag(sha2Base256, ct),
-		p.tag(sha2Base256, ct)) {
+	plain, err := p.tag(sha2Base256, ct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(p.etmTag(sha2Base256, ct), plain) {
 		t.Error("the tag does not include the IV")
 	}
 }
@@ -374,11 +377,14 @@ func roundTripEveryLength(
 }
 
 // The aes-sha2 pair comes first in the table, which is the order a
-// client is offered as this KDC's preference.
+// client is offered as this KDC's preference, and the camellia pair
+// comes last -- where the stock client's own default list puts it
+// (init_ctx.c:59-66), behind even the deprecated types.
 func TestSHA2IsPreferred(t *testing.T) {
 	want := []EncType{
 		AES256CTSHMACSHA384192, AES128CTSHMACSHA256128,
 		AES256CTSHMACSHA196, AES128CTSHMACSHA196,
+		Camellia256CTSCMAC, Camellia128CTSCMAC,
 	}
 	got := Supported()
 	if len(got) != len(want) {

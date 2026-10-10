@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"errors"
@@ -51,12 +52,18 @@ func (p *EncProfile) Decrypt(
 
 // sealDK is the RFC 3961 "dk" profile's layout:
 //
-//	E(Ke, conf || plain) || HMAC(Ki, conf || plain)
+//	E(Ke, conf || plain) || MAC(Ki, conf || plain)
 //
-// truncated to the trailer length. The HMAC covers the *plaintext*,
+// truncated to the trailer length. The MAC covers the *plaintext*,
 // not the ciphertext -- MAC-then-encrypt, which RFC 8009 replaces
 // with the reverse. That difference is the whole reason these are
 // rows in a table and not one true way to encrypt.
+//
+// It is shared with RFC 6803, whose layout is the same to the octet
+// (krb5int_dk_cmac_encrypt, lib/crypto/krb/enc_dk_cmac.c:88-133:
+// confounder, checksum of the plaintext, then encrypt). The cipher
+// and the MAC come out of the row, so this function does not know
+// which family it is serving.
 func sealDK(
 	p *EncProfile,
 	ke, ki, plain []byte,
@@ -68,7 +75,7 @@ func sealDK(
 	}
 	copy(confounded[p.HeaderLength:], plain)
 
-	block, err := aes.NewCipher(ke)
+	block, err := p.newBlock(ke)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +83,11 @@ func sealDK(
 	if err != nil {
 		return nil, err
 	}
-	return append(ct, p.tag(ki, confounded)...), nil
+	sum, err := p.tag(ki, confounded)
+	if err != nil {
+		return nil, err
+	}
+	return append(ct, sum...), nil
 }
 
 // openDK reverses sealDK.
@@ -87,7 +98,7 @@ func openDK(
 	body := ct[:len(ct)-p.TrailerLength]
 	want := ct[len(ct)-p.TrailerLength:]
 
-	block, err := aes.NewCipher(ke)
+	block, err := p.newBlock(ke)
 	if err != nil {
 		return nil, err
 	}
@@ -95,21 +106,25 @@ func openDK(
 	if err != nil {
 		return nil, err
 	}
+	sum, err := p.tag(ki, confounded)
+	if err != nil {
+		return nil, err
+	}
 
 	// hmac.Equal rather than bytes.Equal: the comparison is on a
 	// value an attacker supplies, so it is done in constant time.
-	if !hmac.Equal(p.tag(ki, confounded), want) {
+	if !hmac.Equal(sum, want) {
 		return nil, ErrIntegrity
 	}
 	return confounded[p.HeaderLength:], nil
 }
 
-// Checksum computes the keyed checksum for a message: HMAC under Kc,
-// truncated to the checksum type's length.
+// Checksum computes the keyed checksum for a message: the row's MAC
+// under Kc, truncated to the checksum type's length.
 //
-// Both families compute it the same way once Kc is in hand, so this
-// is not a per-row function -- what differs is how Kc is derived and
-// how long it is, and both of those are already in the row.
+// Every family computes it the same way once Kc is in hand, so this
+// is not a per-row function -- what differs is how Kc is derived, how
+// long it is and which MAC, and all three are already in the row.
 func (p *EncProfile) Checksum(
 	key, msg []byte,
 	usage Usage,
@@ -119,7 +134,7 @@ func (p *EncProfile) Checksum(
 	if err != nil {
 		return nil, err
 	}
-	return p.tag(kc, msg), nil
+	return p.tag(kc, msg)
 }
 
 // VerifyChecksum reports whether a checksum matches a message.
@@ -159,11 +174,31 @@ func (p *EncProfile) subkeys(
 	return ke, ki, nil
 }
 
-// tag is the keyed HMAC truncated to the enctype's trailer length: 96
-// bits of SHA-1's 160 for RFC 3962, and exactly half the hash for RFC
-// 8009.
-func (p *EncProfile) tag(key, msg []byte) []byte {
+// tag is the row's keyed MAC truncated to the enctype's trailer
+// length: 96 bits of SHA-1's 160 for RFC 3962, exactly half the hash
+// for RFC 8009, and the whole of the CMAC for RFC 6803, whose output
+// is the block size already.
+//
+// It returns an error because a CMAC has to build a block cipher and
+// that can refuse a key, where an HMAC takes any key at all.
+func (p *EncProfile) tag(key, msg []byte) ([]byte, error) {
+	sum, err := p.mac(p, key, msg)
+	if err != nil {
+		return nil, err
+	}
+	return sum[:p.TrailerLength], nil
+}
+
+// macHMAC is the keyed MAC of both AES families: HMAC over the row's
+// hash, untruncated -- tag does the truncating, because how much is
+// kept is the row's business and not the MAC's.
+func macHMAC(p *EncProfile, key, msg []byte) ([]byte, error) {
 	m := hmac.New(p.newHash, key)
 	m.Write(msg)
-	return m.Sum(nil)[:p.TrailerLength]
+	return m.Sum(nil), nil
+}
+
+// newAES is the block-cipher constructor for the four AES rows.
+func newAES(key []byte) (cipher.Block, error) {
+	return aes.NewCipher(key)
 }

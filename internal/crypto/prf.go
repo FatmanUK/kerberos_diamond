@@ -1,7 +1,6 @@
 package crypto
 
 import (
-	"crypto/aes"
 	"crypto/sha1"
 	"fmt"
 )
@@ -56,7 +55,7 @@ func prfDK(p *EncProfile, key, in []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(kp)
+	block, err := p.newBlock(kp)
 	if err != nil {
 		return nil, err
 	}

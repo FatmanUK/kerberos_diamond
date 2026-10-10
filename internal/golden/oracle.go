@@ -523,15 +523,17 @@ func freePort() (int, error) {
 // comparison are given, which realm-setup.sh writes into the oracle's
 // kdc.conf verbatim.
 //
-// All four, so that the aes-sha2 family is in range at all, and in
-// this order because the first entry is the enctype every ticket is
-// sealed with. If the two lists ever disagree the diff stops being
-// about the implementations.
+// All six, so that every family is in range at all, and in this order
+// because the first entry is the enctype every ticket is sealed with.
+// If the two lists ever disagree the diff stops being about the
+// implementations.
 func GoldenEnctypes() store.SupportedEnctypes {
 	return store.SupportedEnctypes{
 		crypto.AES256CTSHMACSHA384192,
 		crypto.AES128CTSHMACSHA256128,
 		crypto.AES256CTSHMACSHA196,
 		crypto.AES128CTSHMACSHA196,
+		crypto.Camellia256CTSCMAC,
+		crypto.Camellia128CTSCMAC,
 	}
 }

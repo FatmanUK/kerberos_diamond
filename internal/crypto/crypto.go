@@ -1,22 +1,28 @@
 // Package crypto implements the Kerberos 5 encryption types.
 //
-// Four are supported, in two families. RFC 3962's
+// Six are supported, in three families. RFC 3962's
 // aes256-cts-hmac-sha1-96 and aes128-cts-hmac-sha1-96 are what an
 // unconfigured client negotiates; RFC 8009's
 // aes256-cts-hmac-sha384-192 and aes128-cts-hmac-sha256-128 are what
-// a modern realm prefers.
+// a modern realm prefers; RFC 6803's camellia256-cts-cmac and
+// camellia128-cts-cmac are the only other enctypes upstream has not
+// deprecated.
 //
-// The two families share almost nothing. RFC 3962 derives keys by
+// The families share almost nothing. RFC 3962 derives keys by
 // n-folding a constant and encrypting it repeatedly, and MACs the
 // *plaintext* before encrypting. RFC 8009 derives with a counter-mode
-// HMAC and MACs the *ciphertext* after encrypting. So the row in the
-// dispatch table carries the two differing steps as functions rather
-// than the table being consulted and then switched on: a switch would
-// put that difference in four places instead of one, and adding a
-// third family would mean finding all four.
+// HMAC and MACs the *ciphertext* after encrypting. RFC 6803 keeps RFC
+// 3962's layout but replaces both primitives: a CMAC instead of a
+// truncated HMAC, and SP 800-108 in *feedback* mode instead of the
+// n-fold. So the row in the dispatch table carries the differing
+// steps as functions rather than the table being consulted and then
+// switched on: a switch would put that difference in six places
+// instead of one, and adding a fourth family would mean finding all
+// six.
 package crypto
 
 import (
+	"crypto/cipher"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -39,6 +45,8 @@ const (
 	AES256CTSHMACSHA196    EncType = 18
 	AES128CTSHMACSHA256128 EncType = 19
 	AES256CTSHMACSHA384192 EncType = 20
+	Camellia128CTSCMAC     EncType = 25
+	Camellia256CTSCMAC     EncType = 26
 )
 
 // The checksum types that go with them.
@@ -47,6 +55,8 @@ const (
 	HMACSHA196AES256    CksumType = 16
 	HMACSHA256128AES128 CksumType = 19
 	HMACSHA384192AES256 CksumType = 20
+	CMACCamellia128     CksumType = 17
+	CMACCamellia256     CksumType = 18
 )
 
 // ErrUnsupported reports an encryption or checksum type this package
@@ -99,8 +109,27 @@ type EncProfile struct {
 	// types and the full hash size for the aes-sha2 pair.
 	PRFLength int
 
-	// newHash is the hash every HMAC and the PBKDF2 use.
+	// newHash is the hash the PBKDF2 uses, and the HMAC where the
+	// family has one.
+	//
+	// The RFC 6803 family has no hash of its own -- its MAC is a
+	// CMAC, keyed with the block cipher -- and upstream leaves
+	// the field NULL, whereupon pbkdf2_string_to_key substitutes
+	// SHA-1 (s2k_pbkdf2.c:163). So these rows carry sha1.New for
+	// the PBKDF2 alone and never reach an HMAC.
 	newHash func() hash.Hash
+
+	// newBlock makes the row's block cipher.
+	//
+	// It is in the row because the layout functions are shared
+	// across families: sealDK and openDK are RFC 3962's and RFC
+	// 6803's message layout both, differing only in the cipher
+	// and the MAC.
+	newBlock blockFunc
+
+	// mac is the keyed message authentication code: an HMAC over
+	// the row's hash, or a CMAC over the row's cipher.
+	mac macFunc
 
 	// integrityKeyLength is how long Ki and Kc are.
 	//
@@ -157,14 +186,27 @@ type (
 		p *EncProfile,
 		key, in []byte,
 	) ([]byte, error)
+
+	blockFunc func(key []byte) (cipher.Block, error)
+
+	macFunc func(
+		p *EncProfile,
+		key, msg []byte,
+	) ([]byte, error)
 )
 
 // profiles is the dispatch table, searched linearly as upstream's is
-// (lib/crypto/krb/etypes.c:37-148). Four entries do not need an
-// index, and a slice keeps the preference order visible -- which
-// matters, because Supported() hands this order to a client as the
-// KDC's own preference and the aes-sha2 pair belongs ahead of the
-// aes-sha1 one.
+// (lib/crypto/krb/etypes.c:37-148). Six entries do not need an index,
+// and a slice keeps the preference order visible -- which matters,
+// because Supported() hands this order to a client as the KDC's own
+// preference and the aes-sha2 pair belongs ahead of the aes-sha1 one.
+//
+// The camellia pair goes last because that is where the stock
+// client's own default list puts it (init_ctx.c:59-66), behind even
+// the deprecated types. Within the pair this table prefers 256 to
+// 128, which upstream's client list does *not* -- it names
+// camellia128 first -- but that list is a client's preference and
+// this one is the KDC's, and every other pair here is stronger first.
 var profiles = []EncProfile{
 	{
 		EncType:            AES256CTSHMACSHA384192,
@@ -178,6 +220,8 @@ var profiles = []EncProfile{
 		DefaultIterations:  32768,
 		PRFLength:          48,
 		newHash:            sha512.New384,
+		newBlock:           newAES,
+		mac:                macHMAC,
 		integrityKeyLength: 24,
 		s2kPepper:          "aes256-cts-hmac-sha384-192",
 		derive:             deriveSP800108,
@@ -197,6 +241,8 @@ var profiles = []EncProfile{
 		DefaultIterations:  32768,
 		PRFLength:          32,
 		newHash:            sha256.New,
+		newBlock:           newAES,
+		mac:                macHMAC,
 		integrityKeyLength: 16,
 		s2kPepper:          "aes128-cts-hmac-sha256-128",
 		derive:             deriveSP800108,
@@ -216,6 +262,8 @@ var profiles = []EncProfile{
 		DefaultIterations:  4096,
 		PRFLength:          16,
 		newHash:            sha1.New,
+		newBlock:           newAES,
+		mac:                macHMAC,
 		integrityKeyLength: 32,
 		derive:             deriveDK,
 		seal:               sealDK,
@@ -234,11 +282,55 @@ var profiles = []EncProfile{
 		DefaultIterations:  4096,
 		PRFLength:          16,
 		newHash:            sha1.New,
+		newBlock:           newAES,
+		mac:                macHMAC,
 		integrityKeyLength: 16,
 		derive:             deriveDK,
 		seal:               sealDK,
 		open:               openDK,
 		prf:                prfDK,
+	},
+	{
+		EncType:            Camellia256CTSCMAC,
+		Name:               "camellia256-cts-cmac",
+		KeyLength:          32,
+		BlockSize:          16,
+		HeaderLength:       16,
+		PaddingLength:      0,
+		TrailerLength:      16,
+		RequiredCksum:      CMACCamellia256,
+		DefaultIterations:  32768,
+		PRFLength:          16,
+		newHash:            sha1.New,
+		newBlock:           newCamellia,
+		mac:                macCMAC,
+		integrityKeyLength: 32,
+		s2kPepper:          "camellia256-cts-cmac",
+		derive:             deriveFeedbackCMAC,
+		seal:               sealDK,
+		open:               openDK,
+		prf:                prfCMAC,
+	},
+	{
+		EncType:            Camellia128CTSCMAC,
+		Name:               "camellia128-cts-cmac",
+		KeyLength:          16,
+		BlockSize:          16,
+		HeaderLength:       16,
+		PaddingLength:      0,
+		TrailerLength:      16,
+		RequiredCksum:      CMACCamellia128,
+		DefaultIterations:  32768,
+		PRFLength:          16,
+		newHash:            sha1.New,
+		newBlock:           newCamellia,
+		mac:                macCMAC,
+		integrityKeyLength: 16,
+		s2kPepper:          "camellia128-cts-cmac",
+		derive:             deriveFeedbackCMAC,
+		seal:               sealDK,
+		open:               openDK,
+		prf:                prfCMAC,
 	},
 }
 
@@ -300,4 +392,6 @@ var encTypeAliases = map[string]EncType{
 	"aes256-sha2":     AES256CTSHMACSHA384192,
 	"aes128-cts-sha2": AES128CTSHMACSHA256128,
 	"aes256-cts-sha2": AES256CTSHMACSHA384192,
+	"camellia128-cts": Camellia128CTSCMAC,
+	"camellia256-cts": Camellia256CTSCMAC,
 }

@@ -52,10 +52,14 @@ that have aged worst in the C:
   own PRF vectors (`t_prf.c`, eight cases covering all four enctypes) and ships
   CF2's as a fixed expected file, so unlike the AES-CTS gap these are a real
   anchor and not a round trip.
-- **`internal/crypto` covers four enctypes in two families**: RFC 3962's
-  aes256- and aes128-cts-hmac-sha1-96 and RFC 8009's aes-sha2 pair. Every
-  vector upstream publishes for all four is checked, and the default salt is
-  cross-checked against what the C KDC actually computes.
+- **`internal/crypto` covers six enctypes in three families**: RFC 3962's
+  aes256- and aes128-cts-hmac-sha1-96, RFC 8009's aes-sha2 pair, and RFC
+  6803's camellia256- and camellia128-cts-cmac. Every vector upstream
+  publishes for all six is checked, and the default salt is cross-checked
+  against what the C KDC actually computes. The camellia pair needed two
+  primitives Go has in neither its standard library nor `x/crypto` — the
+  block cipher and CMAC — so they are `internal/camellia`, checked against
+  RFC 3713's three vectors and RFC 4493's four.
 - **A realm can be provisioned with `kdiamond` alone**, and a stock `kinit`
   then uses it. The administrative commands are exercised as a *binary* with
   arguments rather than by calling the functions behind them, so a flag that
@@ -195,8 +199,10 @@ Everything the plan file listed is done, so this list is now the live one.
    reachable; enterprise names and the AS exchange's `WRONG_REALM`
    referral; `supported_enctypes`; the anonymous refusal;
    authorization data and the `AD-MANDATORY-FOR-KDC` element it was
-   ignoring; CAMMAC and authentication indicators; SPAKE. Camellia is
-   the one left, and it is the only *non-deprecated* enctype gap.
+   ignoring; CAMMAC and authentication indicators; SPAKE; and the RFC
+   6803 camellia pair, which closes the only *non-deprecated* enctype
+   gap. Everything upstream still supports and this project does not is
+   deprecated, weak, or both.
 8. **The Windows PAC**, last but one.
 9. **S4U2Self and S4U2Proxy**, last.
 
@@ -257,7 +263,7 @@ The layout is filled in; §1 says what each package does.
   highest key version whatever its enctype
   (`get_first_current_key`, `kdc_util.c:461-473`), so the first entry is
   the enctype every service ticket is encrypted with. The golden harness
-  configures both halves explicitly, with the same four in the same
+  configures both halves explicitly, with the same six in the same
   order, for exactly that reason.
 - **SPAKE is offered only when configured, which is upstream's
   default and not a cautious reading of it.** `DEFAULT_GROUPS_KDC` is
@@ -384,26 +390,44 @@ are not "fixed" back by accident.
   image, so each run begins from an identical database with no history.
 **Encryption types:**
 
-- **Four, in two families, and the table really is a table.** RFC 3962's
-  aes256- and aes128-cts-hmac-sha1-96 and RFC 8009's
-  aes256-cts-hmac-sha384-192 and aes128-cts-hmac-sha256-128. The two
-  families share almost nothing — one derives keys by n-folding a constant
-  and encrypting it and MACs the *plaintext*; the other derives with a
-  counter-mode HMAC and MACs the *ciphertext* — so the row carries those two
-  steps as functions. A switch on the enctype would have put that difference
-  in four places instead of one.
+- **Six, in three families, and the table really is a table.** RFC 3962's
+  aes256- and aes128-cts-hmac-sha1-96, RFC 8009's
+  aes256-cts-hmac-sha384-192 and aes128-cts-hmac-sha256-128, and RFC
+  6803's camellia256- and camellia128-cts-cmac. The families share almost
+  nothing — one derives keys by n-folding a constant and encrypting it and
+  MACs the *plaintext*; the next derives with a counter-mode HMAC and MACs
+  the *ciphertext*; the third keeps the first's message layout to the octet
+  but replaces both primitives — so the row carries those steps as
+  functions. A switch on the enctype would have put that difference in six
+  places instead of one.
+- **Adding the third family is what proved the table.** RFC 6803 reuses RFC
+  3962's `sealDK` and `openDK` unchanged, which only worked because the
+  block cipher and the MAC moved into the row beside the two steps that were
+  already there. Three row fields and two functions; no call site outside
+  `internal/crypto` changed at all, and the two new checksum types fell out
+  of `RequiredCksum` without a checksum table existing anywhere.
+- **The two "SP 800-108" derivations are different modes and are easy to
+  confuse.** RFC 8009 uses *counter* mode with HMAC; RFC 6803 uses
+  *feedback* mode with CMAC, where each block's input begins with the
+  previous block's output (`k5_sp800_108_feedback_cmac`,
+  `lib/crypto/builtin/kdf.c:76-137`). The inputs are otherwise the same
+  shape, so a port that reached for the wrong one produces plausible keys
+  that no peer agrees with. Upstream's `t_derive.c:140-200` is what
+  separates them.
 - **The aes-sha2 pair is preferred**, which `Supported()` reports and the KDC
   offers. A stock MIT *client* still asks for the sha1 pair first
   (`default_enctype_list`, `lib/krb5/krb/init_ctx.c:59-66`), and the client's
   order is what decides which of its long-term keys the reply is encrypted
   under. The KDC's order decides the session key and which key seals a
   ticket. Two orders, two jobs.
-- **The oracle's realm is configured for all four.** MIT's default
+- **The oracle's realm is configured for all six.** MIT's default
   `supported_enctypes` is only the sha1 pair (`include/osconf.hin:109-111`),
-  so a realm left at the default could never exercise the new family through
-  the harness. The list is in the same order `Supported()` reports, because
-  the KDC seals a ticket with the *first* key of a principal's highest key
-  version whatever its enctype.
+  so a realm left at the default could never exercise the other families
+  through the harness. The list is in the same order `Supported()` reports,
+  because the KDC seals a ticket with the *first* key of a principal's
+  highest key version whatever its enctype — which is also why the camellia
+  pair goes last in both: putting it first would re-seal every ticket in
+  every existing case.
 
 **The TGS exchange:**
 
@@ -775,6 +799,12 @@ The standard library covers more of this than it might seem:
 `crypto/sha1` and `crypto/pbkdf2` for the RFC 3962 enctypes, `crypto/tls`
 for the transport, and `net/http` for the KKDCP listener.
 
+Two primitives it does not cover and `x/crypto` does not either: Camellia
+and CMAC. Both are in `internal/camellia`, which is a `cipher.Block`
+implementation and one function, with published vectors for each — not a
+dependency, because adding one for two hundred lines of table-driven cipher
+would be a larger commitment than writing them.
+
 **External non-Go dependency**:
 
 Podman (rootless), for the deployment containers and for the golden oracle
@@ -822,9 +852,24 @@ tests. It is green.
   `t_cksums.c`. For RFC 8009: the six derivations, both string-to-key
   results, all eight published *ciphertexts* — decrypted, because a random
   confounder makes encrypt-and-compare impossible and a round trip would pass
-  with the MAC over entirely the wrong bytes — and both checksums. Plus the
-  negative cases a round trip cannot reach: tampering, a wrong key usage, a
-  truncated ciphertext, and a weak iteration count.
+  with the MAC over entirely the wrong bytes — and both checksums. For RFC
+  6803: all six derivations from `t_derive.c`, all fourteen string-to-key
+  results from `t_str2key.c`, and all four keyed checksums from `t_cksums.c`.
+  Plus the negative cases a round trip cannot reach: tampering, a wrong key
+  usage, a truncated ciphertext, and a weak iteration count.
+- **`internal/camellia`** — the block cipher against RFC 3713's three
+  vectors in both directions, and CMAC twice over: against upstream's
+  Camellia-keyed results (`t_cmac.c`) *and* against RFC 4493's own AES ones.
+  The second is the check upstream says it did by hand and could not
+  automate, because its AES provider has no `cbc_mac` method
+  (`t_cmac.c:33-39`); here there is no such obstacle, and it is worth having
+  because a CMAC that agreed with the Camellia vectors but not the AES ones
+  would mean the fault was in the block cipher and two bugs had cancelled.
+- **One camellia gap, recorded.** The RFC 6803 pseudo-random function has no
+  published vector anywhere — `t_prf.c` has no Camellia case and neither does
+  any other file in upstream's tree — so `prfCMAC` is anchored by reading
+  `prf_cmac.c` rather than by comparison. It is reached only by FAST, whose
+  armor key carries its own enctype.
 - **One gap, deliberate and recorded.** Multi-block AES-CTS is round-tripped
   and checked against plain CBC with the final two blocks swapped, but is not
   anchored to a published vector: upstream's `t_cts.c` prints its results

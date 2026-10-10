@@ -30,9 +30,11 @@ harness](#the-differential-harness) below.
 - **Cross-realm**, including a path through a middle realm, the transited
   field, configured paths (`KD_CAPATHS`) and the referral a KDC offers when
   the trust asked for does not exist.
-- **Four enctypes** in two families: RFC 3962's `aes256-cts-hmac-sha1-96`
-  and `aes128-cts-hmac-sha1-96`, and RFC 8009's `aes256-cts-hmac-sha384-192`
-  and `aes128-cts-hmac-sha256-128`.
+- **Six enctypes** in three families: RFC 3962's `aes256-cts-hmac-sha1-96`
+  and `aes128-cts-hmac-sha1-96`, RFC 8009's `aes256-cts-hmac-sha384-192`
+  and `aes128-cts-hmac-sha256-128`, and RFC 6803's `camellia256-cts-cmac`
+  and `camellia128-cts-cmac` — which between them are everything upstream
+  has not deprecated.
 - **A principal database in Postgres**, with upstream's stored-key blob
   layout, so an imported MIT database can be read.
 - **Principal administration** as `kdiamond` subcommands, standing in for
@@ -266,7 +268,8 @@ There are no exemptions now. Every field of every case is compared.
 | `cmd/kdiamond` | the KDC daemon, and `kadmin`'s replacement |
 | `cmd/kdiamond-proxy` | the client-side KKDCP shim |
 | `internal/config` | the environment, and nothing else |
-| `internal/crypto` | RFC 3961/3962 and RFC 8009 enctypes |
+| `internal/crypto` | RFC 3961/3962, RFC 8009 and RFC 6803 enctypes |
+| `internal/camellia` | the Camellia block cipher and CMAC |
 | `internal/wire` | ASN.1/DER for the message types |
 | `internal/store` | the principal database |
 | `internal/transit` | the transited-realm field and realm paths |

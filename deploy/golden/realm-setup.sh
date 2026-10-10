@@ -83,18 +83,24 @@ $KRB5_MID_REALM:mdb $KRB5_FAR_REALM:sdb"
 # The default is only the two RFC 3962 types
 # (KRB5_DEFAULT_SUPPORTED_ENCTYPES, include/osconf.hin:109-111), so a
 # realm left at the default has no aes-sha2 keys and the differential
-# comparison could never reach that family. Listing all four puts it in
-# range.
+# comparison could never reach that family. Listing all six puts every
+# family this project implements in range -- including the RFC 6803
+# camellia pair, whose keys a principal otherwise simply would not
+# have, so a request naming them would be refused for want of a key
+# rather than compared.
 #
 # The order decides which key seals a ticket: the KDC takes the *first*
 # key of a principal's highest key version, whatever its enctype
 # (get_first_current_key, kdc/kdc_util.c:461-473). So this list has to
 # match the order internal/crypto reports from Supported(), or the two
 # implementations seal with different enctypes and the diff is about
-# the fixture rather than the code.
+# the fixture rather than the code. That is also why the camellia pair
+# goes last: putting it first would re-seal every ticket in every
+# existing case and the one new case would have changed eighty others.
 ETYPES="aes256-cts-hmac-sha384-192:normal \
 aes128-cts-hmac-sha256-128:normal \
-aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal"
+aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal \
+camellia256-cts-cmac:normal camellia128-cts-cmac:normal"
 
 # client_realms writes a krb5.conf [realms] entry per realm. Every one
 # of them is the same KDC, because one krb5kdc serves them all.

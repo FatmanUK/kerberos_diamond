@@ -1,7 +1,6 @@
 package crypto
 
 import (
-	"crypto/aes"
 	"crypto/hmac"
 	"crypto/rand"
 	"encoding/binary"
@@ -88,7 +87,7 @@ func sealETM(
 	}
 	copy(confounded[p.HeaderLength:], plain)
 
-	block, err := aes.NewCipher(ke)
+	block, err := p.newBlock(ke)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +115,7 @@ func openETM(
 	if !hmac.Equal(p.etmTag(ki, body), want) {
 		return nil, ErrIntegrity
 	}
-	block, err := aes.NewCipher(ke)
+	block, err := p.newBlock(ke)
 	if err != nil {
 		return nil, err
 	}
