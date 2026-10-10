@@ -281,10 +281,15 @@ func TestU2UFallsBackWhenTheETypeIsNotOffered(t *testing.T) {
 	_ = openWith(t, rep.Ticket, stktKey.KeyValue)
 }
 
-// S4U2Proxy is refused rather than ignored. Answering it as an
-// ordinary request would issue a ticket for the wrong client
-// entirely, which is worse than saying no.
-func TestS4U2ProxyIsRefused(t *testing.T) {
+// A constrained-delegation request with **no second ticket** is
+// refused, which is the first of check_tgs_s4u2proxy's refusals
+// (tgs_policy.c:429-432).
+//
+// It used to be the whole of this project's S4U2Proxy handling --
+// cname-in-addl-tkt was refused outright as unimplemented -- and the
+// code is the same now that it is implemented, because the option
+// says a second ticket is coming and none did.
+func TestS4U2ProxyNeedsASecondTicket(t *testing.T) {
 	k := testKDC(t)
 	addService(t, k, 0)
 	tgt, session := getTGT(t, k)

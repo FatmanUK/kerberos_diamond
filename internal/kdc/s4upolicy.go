@@ -201,8 +201,17 @@ func (k *KDC) s4uSelfForwardable(
 // null proxy: "does this server have any authorised delegation
 // targets at all?".
 //
-// Always false until E6 adds the relation, which is the same answer
-// upstream gives with db2.
-func (k *KDC) hasDelegationTargets(*store.Principal) bool {
-	return false
+// Sharing one method between that question and the per-target one is
+// upstream's (kdc_util.c:1634-1636), and so is sharing one table
+// here. What it decides is whether a server may hold *forwardable*
+// S4U2Self tickets: a server with traditional delegation targets
+// already has a way to act for a user, so [MS-SFU] 3.2.5.1.2 denies
+// it the forwardable flag as well unless it is explicitly marked
+// +ok_to_auth_as_delegate.
+func (k *KDC) hasDelegationTargets(p *store.Principal) bool {
+	if p == nil {
+		return false
+	}
+	return k.Store.AllowedToDelegate(context.Background(),
+		p.Name, "") == nil
 }

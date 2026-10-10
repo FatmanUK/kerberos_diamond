@@ -155,6 +155,23 @@ const (
 // rather than a const because a principal name is a list.
 var ServiceName = []string{"host", "service.kdiamond.test"}
 
+// DelegationTarget is the service a constrained delegation reaches,
+// and DelegationPassword its password.
+//
+// It is provisioned in this project's database only. The oracle's
+// realm does not have it, deliberately: there is no oracle for a
+// successful S4U2Proxy, because db2 has no check_allowed_to_delegate
+// method and upstream's own suite needs a test KDB module reading
+// JSON out of krb5.conf to reach those cases (t_s4u.py:32-34). What
+// the oracle can still be compared against is the *refusal*, which it
+// gives for a different reason and with the same code.
+var DelegationTarget = []string{
+	"host", "target.kdiamond.test",
+}
+
+// DelegationPassword is its password.
+const DelegationPassword = "targetpassword"
+
 // ReferralService is the host-based service that exists only in the
 // foreign realm, in a domain this realm's KDC maps there.
 var ReferralService = []string{"host", "www." + ReferralDomain}

@@ -106,7 +106,7 @@ func (s *Store) migrate() error {
 	err := s.db.AutoMigrate(
 		&Principal{}, &Key{}, &StringAttr{},
 		&TLDatum{}, &Alias{}, &Policy{}, &HistoryKey{},
-		&Replay{},
+		&Replay{}, &Delegation{}, &RBCDGrant{},
 	)
 	if err != nil {
 		return fmt.Errorf("store: migrate: %w", err)

@@ -3,6 +3,7 @@ package kdc
 import (
 	"errors"
 
+	"github.com/FatmanUK/kerberos_diamond/internal/ndr"
 	"github.com/FatmanUK/kerberos_diamond/internal/pac"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
@@ -150,8 +151,20 @@ func (k *KDC) tgsPAC(
 		return nil
 	}
 	ci := s4uPACClient(s, part)
-	fresh, err := copyPACBuffers(s.headerPAC, ci == nil)
+	subject := k.subjectPAC(s)
+	// The delegation info is *replaced* rather than carried on a
+	// local constrained-delegation request, so it is left out of
+	// the copy there and written afresh below -- which is
+	// upstream's if/else (kdc_authdata.c:519-529).
+	fresh, err := copyPACBuffers(subject, copyRules{
+		clientInfo: ci == nil,
+		delegation: !k.extendsDelegation(s),
+	})
 	if err != nil {
+		return err
+	}
+	if err := k.addDelegationInfo(s, fresh,
+		subject); err != nil {
 		return err
 	}
 	privsvr, err := k.privsvrKey(s.server)
@@ -175,14 +188,11 @@ func (k *KDC) tgsPAC(
 // one over the ticket being issued.
 func copyPACBuffers(
 	subject *pac.PAC,
-	withClient bool,
+	rules copyRules,
 ) (*pac.PAC, error) {
 	out := pac.New()
 	for _, typ := range subject.Types() {
-		if !copiedPACType(typ) {
-			continue
-		}
-		if typ == pac.TypeClientInfo && !withClient {
+		if !copiedPACType(typ) || !rules.allows(typ) {
 			continue
 		}
 		content, err := subject.Get(typ)
@@ -239,6 +249,16 @@ func s4uPACClient(
 	s *tgsState,
 	part *wire.EncTicketPart,
 ) *pac.ClientInfo {
+	// An S4U2Proxy ticket's PAC names the ticket's own client,
+	// which is the user from the evidence ticket -- so the
+	// evidence PAC's CLIENT_INFO already says the right thing and
+	// could be copied; upstream rebuilds it anyway, because the
+	// *authtime* is the new ticket's (:538-543).
+	if s.isProxy() {
+		ci := pacClientInfo(
+			clientInfoName(part.CName, ""), part.AuthTime)
+		return &ci
+	}
 	if s.s4u == nil {
 		return nil
 	}
@@ -279,4 +299,89 @@ func (k *KDC) checkNormalPAC(s *tgsState) (int32, string) {
 		return wire.ErrCodeBadOption, "HEADER_PAC"
 	}
 	return 0, ""
+}
+
+// addDelegationInfo records the delegation chain in the new PAC
+// (update_delegation_info, kdc_authdata.c:382-439).
+//
+// It runs on a **local** constrained-delegation request only
+// (handle_pac's gate, :519-523): a cross-realm one carries the chain
+// forward rather than extending it, and an ordinary request has no
+// chain. So this is the first hop, and what it writes is the target
+// being reached now plus the service that asked -- the second
+// ticket's *server*, which is the impersonator.
+//
+// The asymmetry in the two names is upstream's and is visible in the
+// captured buffers internal/ndr is anchored against: the target
+// carries no realm and the transited service does.
+func (k *KDC) addDelegationInfo(
+	s *tgsState,
+	fresh, subject *pac.PAC,
+) error {
+	if !k.extendsDelegation(s) {
+		return nil
+	}
+	di := ndr.DelegationInfo{
+		ProxyTarget: clientInfoName(*s.req.Body.SName, ""),
+	}
+	if old, err := subject.Get(
+		pac.TypeDelegationInfo); err == nil {
+		was, err := ndr.Unmarshal(old)
+		if err != nil {
+			return err
+		}
+		di.TransitedServices = was.TransitedServices
+	}
+	di.TransitedServices = append(di.TransitedServices,
+		clientInfoName(s.stktSrv, s.headerRealm))
+	der, err := ndr.Marshal(di)
+	if err != nil {
+		return err
+	}
+	return fresh.Add(pac.TypeDelegationInfo, der)
+}
+
+// copyRules says which of the two buffers a re-signing rebuilds are
+// left out of the copy.
+//
+// Both are named rather than inferred because the reason differs:
+// CLIENT_INFO is rebuilt when the new ticket names a different
+// client, and the delegation info when this hop extends the chain.
+type copyRules struct {
+	clientInfo bool
+	delegation bool
+}
+
+func (r copyRules) allows(typ uint32) bool {
+	switch typ {
+	case pac.TypeClientInfo:
+		return r.clientInfo
+	case pac.TypeDelegationInfo:
+		return r.delegation
+	}
+	return true
+}
+
+// extendsDelegation reports a request that adds a hop to the
+// delegation chain, which is a **local** constrained-delegation
+// request (handle_pac's gate, kdc_authdata.c:519-523).
+//
+// A cross-realm one carries the chain forward instead, and an
+// ordinary request has no chain.
+func (k *KDC) extendsDelegation(s *tgsState) bool {
+	return s.isProxy() && s.headerRealm == k.Realm
+}
+
+// subjectPAC is the PAC the new one is built from.
+//
+// **For S4U2Proxy that is the evidence ticket's and not the header
+// ticket's.** The header ticket is the impersonator's own; the
+// evidence ticket's PAC is the one describing the user being acted
+// for, and upstream passes it down as subject_pac for exactly that
+// reason (do_tgs_req.c:972-989).
+func (k *KDC) subjectPAC(s *tgsState) *pac.PAC {
+	if s.isProxy() && s.stktPAC != nil {
+		return s.stktPAC
+	}
+	return s.headerPAC
 }

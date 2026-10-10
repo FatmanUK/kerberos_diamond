@@ -76,8 +76,14 @@ func (k *KDC) addTGSIndicators(
 	if err != nil {
 		return nil, wire.ErrCodeGeneric, "LOCAL TGT KEY"
 	}
-	ind := k.authIndicators(s.header, tgtKey, tgtEType,
-		tgtKVNO)
+	// The indicators come from the **subject ticket**, which for
+	// a constrained-delegation request is the evidence ticket and
+	// not the header (do_tgs_req.c:745-752, :761-769). They
+	// describe how the *user* authenticated, and on an S4U2Proxy
+	// request the user is the one who authenticated to the
+	// service presenting the evidence.
+	ind := k.authIndicators(s.subjectTicket(), tgtKey,
+		tgtEType, tgtKVNO)
 	if code, status := checkIndicators(
 		s.server, ind); code != 0 {
 		return nil, code, status
@@ -197,4 +203,14 @@ func (k *KDC) setAuthData(s *tgsState) (int32, string) {
 	}
 	s.authData = field
 	return 0, ""
+}
+
+// subjectTicket is the ticket whose client the issued ticket is for:
+// the evidence ticket on a constrained-delegation request and the
+// header ticket otherwise (do_tgs_req.c:745-752).
+func (s *tgsState) subjectTicket() wire.EncTicketPart {
+	if s.isProxy() && s.stkt != nil {
+		return *s.stkt
+	}
+	return s.header
 }

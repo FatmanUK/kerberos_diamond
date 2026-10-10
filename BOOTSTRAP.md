@@ -206,13 +206,13 @@ Everything the plan file listed is done, so this list is now the live one.
 8. **The Windows PAC**, last but one. Done: the container is anchored
    against bytes three generations of Windows KDC produced, the KDC
    issues a signed PAC in every ticket unless the client declines one
-   or the realm turns them off, and all 91 golden cases compare it —
+   or the realm turns them off, and all 95 golden cases compare it —
    with one case comparing the two KDCs' PACs octet for octet.
    `PA-PAC-OPTIONS` is implemented and echoed too. Still to do is S4U.
-9. **S4U2Self and S4U2Proxy**, last. S4U2Self is done — a stock
-   `kvno -I` impersonates against this KDC, and the differential
-   harness compares the exchange field for field. S4U2Proxy, RBCD and
-   the NDR that cross-realm RBCD needs are what remain.
+9. ~~**S4U2Self and S4U2Proxy**, last.~~ Done. A stock `kvno -I`
+   impersonates against this KDC and a stock `kvno -P -I` performs a
+   constrained delegation, by either of the two relations. Cross-realm
+   S4U2Proxy is refused rather than mishandled — see §3.1.
 
 ## 3. Project State
 
@@ -581,6 +581,67 @@ are not "fixed" back by accident.
   present must name the ticket's own client. A ticket whose PAC and
   whose cname disagree is one a service reads two answers out of.
 
+**S4U2Proxy and constrained delegation:**
+
+- **A service can get a ticket to a third service naming a user who
+  authenticated to it**, presenting its own TGT as the header ticket
+  and the user's forwardable ticket *to it* as the evidence. Six
+  refusals guard the shape of that (`check_tgs_s4u2proxy`,
+  `tgs_policy.c:423-518`) and the authorisation comes after them, so a
+  malformed request is told so and only a well-formed one reaches the
+  question of policy.
+- **The evidence ticket must be forwardable, and that is how the user
+  consents** (`:433-436`). A client that does not want to be delegated
+  asks for a non-forwardable ticket and cannot be.
+- **A ticket-granting service is not a legal target** (`:447-450`). A
+  TGT obtained this way would let the impersonator ask for anything,
+  which is *un*constrained delegation and the thing being constrained.
+- **The two relations Postgres makes easy.** Authorisation needs two
+  things a flat-file KDB cannot express: who may delegate to whom
+  (`krb5_db_check_allowed_to_delegate`) and, for RBCD, which
+  impersonators a resource accepts
+  (`krb5_db_allowed_to_delegate_from`). **DB2 implements neither** —
+  which is why upstream's own suite reaches the successful cases only
+  through a *test* KDB module reading JSON out of krb5.conf
+  (`t_s4u.py:32-34`), and why its real answer is LDAP. Here they are
+  two tables and five `kdiamond` verbs, and the successful cases are
+  reachable with no plugin at all.
+- **The two run in opposite directions, and the difference is
+  administrative.** A traditional grant is made by whoever
+  administers the impersonator, so a front end's operator decides
+  which back ends it may reach; a resource-based grant is made by
+  whoever administers the resource, so the back end decides who may
+  reach it. Either authorises a delegation on its own, resource-based
+  first and only when the client announced `PA-PAC-OPTIONS` RBCD
+  (`:532-555`).
+- **A table turns "no grant" into a denial**, where upstream against
+  db2 cannot answer at all. The status distinguishes them:
+  `NOT_ALLOWED_TO_DELEGATE` means a relation said no,
+  `UNSUPPORTED_S4U2PROXY_REQUEST` that none was consulted — which here
+  happens only for a cross-realm requester that did not announce RBCD.
+  Both are `KDC_ERR_BADOPTION` on the wire.
+- **One interaction with S4U2Self that bites.** A service with any
+  traditional grant stops getting *forwardable* S4U2Self tickets
+  ([MS-SFU] 3.2.5.1.2, `kdc_util.c:1623-1644`), and S4U2Proxy refuses
+  a non-forwardable evidence ticket — so traditional S4U2Proxy built
+  on an S4U2Self ticket needs `+ok_to_auth_as_delegate`. An RBCD-only
+  grant takes nothing away and never meets this, which is a real
+  argument for preferring it.
+- **`internal/ndr` is the only NDR in the project**, for the PAC's
+  `S4U_DELEGATION_INFO` buffer and nothing else. A local
+  constrained-delegation request records the chain it extended, and
+  the buffer is DCE RPC type-serialised rather than ASN.1. It is also
+  not general NDR: an `RPC_UNICODE_STRING` is a conformant-varying
+  array whose length fields move depending on where it sits in the
+  struct, and neither upstream nor this decodes that generically —
+  both read the exact layout Active Directory emits.
+- **Cross-realm S4U2Proxy is refused rather than mishandled.** Its
+  evidence ticket is a referral TGT whose PAC carries the delegation
+  info, and the chain of referral-chasing requests around it is a
+  phase of its own. The refusal is explicit, with its own status, for
+  the reason §3.3 gives three times over: a request answered as
+  something else would succeed and be wrong.
+
 **The TGS exchange:**
 
 - **Everything but S4U and cross-realm issues a ticket.** A client spends a
@@ -713,7 +774,7 @@ are not "fixed" back by accident.
   only NDR upstream has is `kdc/ndr.c`, for `S4U_DELEGATION_INFO` alone),
   and there are three keyed checksums, or four on a service ticket.
 
-  **The golden harness no longer declines it**, so all 91 cases compare a
+  **The golden harness no longer declines it**, so all 95 cases compare a
   PAC this project built against one the C built. One case still declines,
   because declining is behaviour too (`t_authdata.py:288-294`), and one
   compares the two PACs **octet for octet** — see §6.
@@ -1081,6 +1142,14 @@ raised only there, because `make golden` runs the same package without
   them with an arcfour key for exactly that reason (`t_pac.c:511-512`), so
   the rebuild-from-payloads path stands in, which is check_pac's own
   second half.
+- **`internal/ndr`** — covered, and anchored by three
+  `S4U_DELEGATION_INFO` buffers upstream captured from Active
+  Directory 2019 (`kdc/t_ndr.c:40-116`). Decoding one and re-encoding
+  it reproduces the octets, which is upstream's own test
+  (`:165-171`) and has to be the anchor rather than a round trip: the
+  layout is not derivable from the specification. The three cases
+  cover one transited service, an odd-length name (so the pad), and
+  two services; plus the two fuzzing blobs, which must be refused.
 - **`internal/wire`** — covered, and anchored the same way: every message the
   AS exchange touches is decoded from `tests/asn.1/reference_encode.out` and
   re-encoded to byte-identical octets. That file is output from upstream's own

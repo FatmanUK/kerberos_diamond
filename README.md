@@ -35,6 +35,11 @@ harness](#the-differential-harness) below.
   and `aes128-cts-hmac-sha256-128`, and RFC 6803's `camellia256-cts-cmac`
   and `camellia128-cts-cmac` — which between them are everything upstream
   has not deprecated.
+- **S4U2Self and S4U2Proxy**, with the two constrained-delegation
+  relations as Postgres tables — which is the one place the departure from
+  a flat-file database pays off outright: upstream's own answer is LDAP,
+  and its test suite needs a plugin to reach the cases this fixture reaches
+  with a `kdiamond` verb.
 - **A signed Windows PAC** in every ticket, unless the client declines one
   or the realm turns them off — the container, the CLIENT_INFO buffer and
   all four checksums, anchored against PACs three generations of Windows
@@ -275,6 +280,7 @@ There are no exemptions now. Every field of every case is compared.
 | `internal/crypto` | RFC 3961/3962, RFC 8009 and RFC 6803 enctypes |
 | `internal/camellia` | the Camellia block cipher and CMAC |
 | `internal/pac` | the Windows PAC container and its checksums |
+| `internal/ndr` | the PAC's one NDR buffer, for delegation |
 | `internal/wire` | ASN.1/DER for the message types |
 | `internal/store` | the principal database |
 | `internal/transit` | the transited-realm field and realm paths |

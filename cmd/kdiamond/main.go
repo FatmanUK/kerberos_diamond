@@ -86,6 +86,39 @@ An attribute SPEC is kadmin's, sign included: +requires_preauth,
 *clears* DISALLOW_FORWARDABLE -- so read them as what the principal is
 permitted, not as which bit is set.
 `)
+	usageDelegation()
+}
+
+// usageDelegation is the third part, for the verbs kadmin has no
+// equivalent of.
+func usageDelegation() {
+	fmt.Fprint(os.Stderr, `
+constrained delegation, which kadmin has no verb for:
+  kdiamond delegate IMPERSONATOR TARGET
+                                  let a service act for anyone at
+                                  TARGET
+  kdiamond undelegate IMPERSONATOR TARGET
+  kdiamond rbcd RESOURCE IMPERSONATOR
+                                  let RESOURCE accept delegation
+                                  from a service
+  kdiamond unrbcd RESOURCE IMPERSONATOR
+  kdiamond getdelegations PRINCIPAL
+                                  print both relations for one name
+
+The two relations run in opposite directions and either authorises a
+delegation on its own. A "delegate" grant is made by whoever
+administers the impersonator; an "rbcd" grant by whoever administers
+the resource, and a client has to announce PA-PAC-OPTIONS RBCD for
+that one to be consulted. Upstream has no flat-file equivalent of
+either -- its answer is an LDAP attribute -- which is why these verbs
+are this project's own rather than kadmin's.
+
+Note the interaction with S4U2Self: a service with any "delegate"
+grant stops getting *forwardable* S4U2Self tickets unless it also has
++ok_to_auth_as_delegate ([MS-SFU] 3.2.5.1.2), and traditional
+S4U2Proxy built on an S4U2Self ticket needs that flag for exactly
+that reason.
+`)
 }
 
 func run(args []string) error {
@@ -148,6 +181,14 @@ func adminCommand(cmd string) func([]string) error {
 		"getpol":          getpol,
 		"getpols":         getpols,
 		"listpols":        getpols,
+
+		// Constrained delegation, which kadmin has no verb
+		// for at all -- see delegate.go.
+		"delegate":       delegate,
+		"undelegate":     undelegate,
+		"rbcd":           rbcd,
+		"unrbcd":         unrbcd,
+		"getdelegations": getdelegations,
 	}[cmd]
 }
 

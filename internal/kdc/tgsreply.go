@@ -121,8 +121,16 @@ func (k *KDC) tgsTicket(s *tgsState) (*wire.Ticket, error) {
 //
 // Ordinarily that is the service's first current long-term key.
 // User-to-user replaces it entirely, for the reason u2u.go gives.
+//
+// **The test is on the option and not on the second ticket being
+// present**, which it used to be and could not stay: S4U2Proxy also
+// brings a second ticket, and sealing its reply with that ticket's
+// session key would produce a ticket the target service cannot open
+// at all. Nothing caught it until S4U2Proxy landed, because
+// user-to-user was the only thing that set s.stkt.
 func (s *tgsState) sealingKey() ([]byte, crypto.EncType, int32) {
-	if s.stkt != nil {
+	if s.req.Body.Options&wire.OptEncTktInSKey != 0 &&
+		s.stkt != nil {
 		return u2uSealingKey(s)
 	}
 	return s.serverKey, s.serverEType, s.serverKVNO
@@ -288,15 +296,35 @@ func (k *KDC) tgsNegotiationPAData(
 // issues is a cross-realm TGT for the server to spend elsewhere, not
 // the service ticket the server asked for.
 func (s *tgsState) ticketCName() wire.PrincipalName {
-	if s.s4u != nil && !s.referral {
+	if s.referral {
+		return s.header.CName
+	}
+	if s.s4u != nil {
 		return *s.s4u.UserID.UserName
+	}
+	// For S4U2Proxy the impersonated client is the **evidence
+	// ticket's** client: the user who really did authenticate to
+	// the service presenting it (do_tgs_req.c:747-751).
+	if s.isProxy() && s.stkt != nil {
+		return s.stkt.CName
 	}
 	return s.header.CName
 }
 
 func (s *tgsState) ticketCRealm() string {
-	if s.s4u != nil && !s.referral {
+	if s.referral {
+		return s.header.CRealm
+	}
+	if s.s4u != nil {
 		return s.s4u.UserID.UserRealm
 	}
+	if s.isProxy() && s.stkt != nil {
+		return s.stkt.CRealm
+	}
 	return s.header.CRealm
+}
+
+// isProxy reports a constrained-delegation request.
+func (s *tgsState) isProxy() bool {
+	return s.req.Body.Options&wire.OptCNameInAddlTkt != 0
 }

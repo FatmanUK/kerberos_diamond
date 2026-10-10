@@ -87,9 +87,16 @@ type tgsState struct {
 
 	// stkt is the request's second ticket, decrypted, and stktSrv
 	// the principal it names. Both are nil unless the options
-	// asked for user-to-user.
+	// asked for user-to-user or S4U2Proxy.
 	stkt    *wire.EncTicketPart
 	stktSrv wire.PrincipalName
+
+	// stktKey is the key that opened it and stktPAC its verified
+	// PAC, which S4U2Proxy needs: the second ticket is the
+	// *evidence* ticket and its PAC is what says which user
+	// obtained it.
+	stktKey wire.EncryptionKey
+	stktPAC *pac.PAC
 
 	// serverName is the name the issued ticket will carry, which
 	// is the one asked for unless referral is set -- a referral
@@ -165,6 +172,7 @@ func (k *KDC) tgsSteps(s *tgsState) (int32, string) {
 		k.tgsServer,
 		k.readS4USelf,
 		k.readSecondTicket,
+		k.verifySecondPAC,
 		k.buildTransited,
 		k.tgsPolicy,
 		k.tgsTimesStep,
@@ -516,14 +524,6 @@ func (k *KDC) serverKeyFor(s *tgsState) (int32, string) {
 // after all of them (:746).
 func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 	opts := s.req.Body.Options
-	// S4U2Proxy is not implemented and is refused rather than
-	// ignored: cname-in-addl-tkt means the request is asking for
-	// a ticket on another principal's behalf, and answering it as
-	// an ordinary request would issue a ticket for the wrong
-	// client.
-	if opts&wire.OptCNameInAddlTkt != 0 {
-		return wire.ErrCodeBadOption, "S4U2PROXY UNSUPPORTED"
-	}
 	if code, status := checkTGSOpts(opts, s.header); code != 0 {
 		return code, status
 	}
@@ -544,6 +544,16 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 		opts, s.server, s.header, s.now)
 	if code != 0 {
 		return code, status
+	}
+	// And the delegation's authorisation, which is the *policy*
+	// half rather than a constraint: check_tgs_policy asks it
+	// after the service checks and before anything else
+	// (tgs_policy.c:744-755).
+	if opts&wire.OptCNameInAddlTkt != 0 {
+		code, status = k.checkS4UProxyPolicy(s)
+		if code != 0 {
+			return code, status
+		}
 	}
 	return k.checkTransited(s)
 }
@@ -567,6 +577,9 @@ func (k *KDC) tgsLineage(s *tgsState) (int32, string) {
 	}
 	if code, status := k.checkLineage(s); code != 0 {
 		return code, status
+	}
+	if s.req.Body.Options&wire.OptCNameInAddlTkt != 0 {
+		return k.checkS4UProxy(s)
 	}
 	return k.checkNormalPAC(s)
 }

@@ -38,7 +38,14 @@ import (
 // NO_2ND_TKT to a request that upstream refuses for a different and
 // better reason.
 func (k *KDC) readSecondTicket(s *tgsState) (int32, string) {
-	if s.req.Body.Options&wire.OptEncTktInSKey == 0 {
+	// Two options bring a second ticket, and upstream's
+	// decrypt_2ndtkt handles both in one place because what it
+	// does with it is the same: open it and read its PAC. Which
+	// option it was decides what the policy makes of it --
+	// user-to-user wants a TGT whose client is the server, and
+	// S4U2Proxy wants a forwardable service ticket issued *to*
+	// the impersonator (do_tgs_req.c:258-300).
+	if !wantsSecondTicket(s) {
 		return 0, ""
 	}
 	tickets, err := s.req.Body.Tickets()
@@ -48,7 +55,15 @@ func (k *KDC) readSecondTicket(s *tgsState) (int32, string) {
 	if len(tickets) == 0 {
 		return 0, ""
 	}
-	second := tickets[0]
+	return k.openSecondTicket(s, tickets[0])
+}
+
+// openSecondTicket finds the key the second ticket was sealed with,
+// opens it, and records all three on the state.
+func (k *KDC) openSecondTicket(
+	s *tgsState,
+	second wire.Ticket,
+) (int32, string) {
 	// ticketKey looks a ticket's server up in this realm whatever
 	// realm the ticket claims, as it does for the header ticket,
 	// so the claim is checked here rather than relied on not to
@@ -66,6 +81,35 @@ func (k *KDC) readSecondTicket(s *tgsState) (int32, string) {
 	}
 	s.stkt = &tkt
 	s.stktSrv = second.SName
+	s.stktKey = wire.EncryptionKey{
+		KeyType:  second.EncPart.EType,
+		KeyValue: key,
+	}
+	return 0, ""
+}
+
+// wantsSecondTicket reports an option that brings one.
+func wantsSecondTicket(s *tgsState) bool {
+	return s.req.Body.Options&(wire.OptEncTktInSKey|
+		wire.OptCNameInAddlTkt) != 0
+}
+
+// verifySecondPAC checks the second ticket's PAC, which S4U2Proxy
+// needs and user-to-user does not (get_verified_pac on the second
+// ticket, do_tgs_req.c:291-296).
+//
+// It is the *evidence* ticket's PAC: the one that says which user
+// obtained the ticket the impersonator is presenting. Without it
+// there is nothing to impersonate on behalf of.
+func (k *KDC) verifySecondPAC(s *tgsState) (int32, string) {
+	if s.stkt == nil {
+		return 0, ""
+	}
+	p, err := k.verifiedPAC(s.stktSrv, *s.stkt, s.stktKey)
+	if err != nil {
+		return wire.ErrCodeModified, "SECOND PAC"
+	}
+	s.stktPAC = p
 	return 0, ""
 }
 
@@ -132,7 +176,12 @@ func (k *KDC) stktClientIsServer(s *tgsState) bool {
 // ordinary selection runs instead. So a zero enctype with no error is
 // "no preference", not a failure.
 func u2uSessionEType(s *tgsState) (crypto.EncType, int32, string) {
-	if s.stkt == nil {
+	// Gated on the option for the same reason sealingKey is: an
+	// S4U2Proxy request brings a second ticket too, and taking
+	// the session enctype from it would be reading a preference
+	// nobody expressed.
+	if s.stkt == nil ||
+		s.req.Body.Options&wire.OptEncTktInSKey == 0 {
 		return 0, 0, ""
 	}
 	want := s.stkt.Key.KeyType

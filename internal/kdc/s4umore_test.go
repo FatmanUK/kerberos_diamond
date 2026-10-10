@@ -1,6 +1,7 @@
 package kdc
 
 import (
+	"context"
 	"testing"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
@@ -141,35 +142,68 @@ func TestS4USelfOverridesNoAuthDataRequired(t *testing.T) {
 	}
 }
 
-// s4u2self_forwardable is currently a no-op and the test says so
-// rather than leaving the reader to infer it (kdc_util.c:1623-1644).
+// s4u2self_forwardable is [MS-SFU] 3.2.5.1.2 and it has three answers
+// (kdc_util.c:1623-1644).
 //
 // A server with +ok_to_auth_as_delegate keeps the flag outright. Any
-// other server keeps it too **unless it has traditional S4U2Proxy
-// delegation targets**, and that relation is E6's table. Upstream
-// behaves identically against db2, where
+// other server keeps it **unless it has traditional S4U2Proxy
+// delegation targets**, and then loses it -- which reads backwards
+// and is the point: a service that can already act for users through
+// traditional delegation is not also given forwardable tickets to act
+// for them elsewhere. The consequence is sharp and upstream tests it
+// (t_s4u.py:58-76): traditional S4U2Proxy built on an S4U2Self ticket
+// needs +ok_to_auth_as_delegate, because without it the evidence
+// ticket is not forwardable and S4U2Proxy refuses one.
+//
+// Against db2 this is unreachable --
 // krb5_db_check_allowed_to_delegate answers KRB5_PLUGIN_OP_NOTSUPP
-// and the flag is left alone -- so this agrees with the oracle rather
-// than merely being unfinished.
-func TestS4USelfForwardableIsStillANoOp(t *testing.T) {
+// and the flag is always kept -- so the middle case is one this
+// project can test and upstream cannot without a plugin.
+func TestS4USelfForwardable(t *testing.T) {
 	k := testKDC(t)
-	s := &tgsState{s4u: &wire.PAS4UX509User{},
-		server: &store.Principal{}}
+	addService(t, k, 0)
+	addTarget(t, k)
 	const in = wire.FlagForwardable | wire.FlagRenewable
+	s := &tgsState{s4u: &wire.PAS4UX509User{}}
+	s.server = lookup(t, k, serviceName)
+
+	// No grants: the flag survives.
 	if got := k.s4uSelfForwardable(s, in); got != in {
-		t.Errorf("flags %#08x, want %#08x",
-			uint32(got), uint32(in))
+		t.Errorf("with no grants: %#08x", uint32(got))
 	}
-	s.server.Attributes = store.AttrOKToAuthAsDelegate
+	// A grant: the flag goes.
+	grantDelegation(t, k, serviceName, targetName)
+	s.server = lookup(t, k, serviceName)
+	want := in &^ wire.FlagForwardable
+	if got := k.s4uSelfForwardable(s, in); got != want {
+		t.Errorf("with a grant: %#08x, want %#08x",
+			uint32(got), uint32(want))
+	}
+	// ok-to-auth-as-delegate overrides the grant.
+	s.server.Attributes |= store.AttrOKToAuthAsDelegate
 	if got := k.s4uSelfForwardable(s, in); got != in {
-		t.Errorf("with ok-to-auth-as-delegate: %#08x",
-			uint32(got))
+		t.Errorf("with the attribute: %#08x", uint32(got))
 	}
 	// And an ordinary request is not touched at all.
 	if got := k.s4uSelfForwardable(&tgsState{},
 		in); got != in {
 		t.Errorf("an ordinary request: %#08x", uint32(got))
 	}
+}
+
+// lookup reads a principal back out of the store.
+func lookup(
+	t *testing.T,
+	k *KDC,
+	components []string,
+) *store.Principal {
+	t.Helper()
+	p, err := k.Store.Lookup(context.Background(),
+		store.UnparseName(testRealm, components))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // A certificate-only request in *this* realm is refused rather than

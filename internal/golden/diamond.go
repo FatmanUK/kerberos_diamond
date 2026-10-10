@@ -207,7 +207,22 @@ func realmEntries() []fixtureEntry {
 			store.AttrRequiresPreAuth},
 		{[]string{"krbtgt", Realm}, TgtPassword,
 			TgtKVNO, 0},
-		{ServiceName, ServicePassword, 1, 0},
+		// The service carries +ok_to_auth_as_delegate so that
+		// its S4U2Self tickets stay forwardable once it has a
+		// delegation grant, which [MS-SFU] 3.2.5.1.2 would
+		// otherwise take away -- and traditional S4U2Proxy
+		// built on an S4U2Self ticket needs them forwardable.
+		// Upstream's own suite needs the same flag for the
+		// same case (t_s4u.py:58-76).
+		{ServiceName, ServicePassword, 1,
+			store.AttrOKToAuthAsDelegate},
+		// DelegationTarget is the third service in a
+		// constrained delegation: the one the service asks to
+		// reach on a user's behalf. It exists only in this
+		// database, not in the oracle's, because there is no
+		// oracle for a *successful* S4U2Proxy -- db2 cannot
+		// express the grant at all.
+		{DelegationTarget, DelegationPassword, 1, 0},
 		{[]string{PeerName}, PeerPassword, 1,
 			store.AttrDisallowSvr},
 		// PWCHANGE_SERVICE is what exempts a principal whose
