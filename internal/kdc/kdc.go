@@ -70,6 +70,16 @@ type KDC struct {
 	// configured no list at all.
 	AdminACL acl.ACL
 
+	// DisablePAC turns the Windows PAC off for the whole realm,
+	// which is kdc.conf's disable_pac (handle_pac's second test,
+	// kdc_authdata.c:485).
+	//
+	// Default false, so a realm issues PACs unless it says
+	// otherwise -- upstream's default, and the one a Windows
+	// client needs. A realm with no Windows clients loses nothing
+	// by setting it and saves every ticket a few hundred octets.
+	DisablePAC bool
+
 	// SPAKEIndicators are the authentication indicators a
 	// successful SPAKE exchange asserts, which is upstream's
 	// per-realm spake_preauth_indicator (add_indicators,

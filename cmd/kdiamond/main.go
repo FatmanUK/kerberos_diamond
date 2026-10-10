@@ -247,6 +247,7 @@ func routes(
 
 		SPAKEGroups:     c.SPAKEGroups,
 		SPAKEIndicators: c.SPAKEIndicators,
+		DisablePAC:      c.DisablePAC,
 
 		Hosts:             c.Hosts,
 		HostBasedServices: c.HostBasedServices,

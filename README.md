@@ -35,6 +35,10 @@ harness](#the-differential-harness) below.
   and `aes128-cts-hmac-sha256-128`, and RFC 6803's `camellia256-cts-cmac`
   and `camellia128-cts-cmac` — which between them are everything upstream
   has not deprecated.
+- **A signed Windows PAC** in every ticket, unless the client declines one
+  or the realm turns them off — the container, the CLIENT_INFO buffer and
+  all four checksums, anchored against PACs three generations of Windows
+  KDC produced.
 - **A principal database in Postgres**, with upstream's stored-key blob
   layout, so an imported MIT database can be read.
 - **Principal administration** as `kdiamond` subcommands, standing in for

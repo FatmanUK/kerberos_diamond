@@ -413,3 +413,56 @@ func TestSupportedEnctypesMalformed(t *testing.T) {
 			err)
 	}
 }
+
+// KD_DISABLE_PAC is the first boolean this package reads, and the
+// spellings it takes are strconv's, which are a superset of the ones
+// krb5.conf accepts -- the right direction for a transcribed
+// configuration to be wrong in.
+func TestDisablePAC(t *testing.T) {
+	for _, c := range []struct {
+		value string
+		want  bool
+	}{
+		{"", false},
+		{"true", true},
+		{"TRUE", true},
+		{"1", true},
+		{"false", false},
+		{"0", false},
+	} {
+		setMinimal(t)
+		if c.value != "" {
+			t.Setenv("KD_DISABLE_PAC", c.value)
+		}
+		got, err := Load(Serve)
+		if err != nil {
+			t.Fatalf("%q: %v", c.value, err)
+		}
+		if got.DisablePAC != c.want {
+			t.Errorf("%q parsed as %v",
+				c.value, got.DisablePAC)
+		}
+	}
+}
+
+// A value that is neither true nor false is a **fault**, not a silent
+// false, which is this package's standing rule: a typo that read as
+// "off" would turn a feature on and say nothing. The error names the
+// variable, as every other one here does.
+//
+// Note that "yes" is one of these. It is krb5.conf's spelling and not
+// strconv's, so an operator transcribing a stanza gets told rather
+// than getting the opposite of what they wrote.
+func TestDisablePACMalformed(t *testing.T) {
+	setMinimal(t)
+	t.Setenv("KD_DISABLE_PAC", "maybe")
+
+	_, err := Load(Serve)
+	if err == nil {
+		t.Fatal("accepted")
+	}
+	if !strings.Contains(err.Error(), "KD_DISABLE_PAC") {
+		t.Errorf("the error does not name the variable: %v",
+			err)
+	}
+}

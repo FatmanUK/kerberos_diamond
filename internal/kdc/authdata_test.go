@@ -37,7 +37,12 @@ func encAuthData(
 }
 
 // ticketAuthDataOf opens an issued ticket and decodes its
-// authorization data.
+// authorization data, **less the PAC**.
+//
+// The PAC is dropped because every ticket carries one now and the
+// cases below are about the copy paths. It is asserted separately, in
+// TestTheIssuedTicketCarriesAVerifiablePAC, rather than being
+// tolerated here and nowhere checked.
 func ticketAuthDataOf(
 	t *testing.T,
 	rep *wire.TGSRep,
@@ -48,7 +53,45 @@ func ticketAuthDataOf(
 	if err != nil {
 		t.Fatalf("the ticket's authdata: %v", err)
 	}
-	return ad
+	return withoutPAC(t, ad)
+}
+
+// withoutPAC drops the AD-IF-RELEVANT container holding the PAC,
+// insisting there is exactly one of them -- so a case using this
+// still fails if the PAC went missing.
+func withoutPAC(
+	t *testing.T,
+	ad wire.AuthorizationData,
+) wire.AuthorizationData {
+	t.Helper()
+	var out wire.AuthorizationData
+	found := 0
+	for _, d := range ad {
+		if d.Type == wire.ADIfRelevant && hasPAC(t, d) {
+			found++
+			continue
+		}
+		out = append(out, d)
+	}
+	if found != 1 {
+		t.Fatalf("the ticket carries %d PACs: %v", found, ad)
+	}
+	return out
+}
+
+// hasPAC reports an AD-IF-RELEVANT container with a PAC in it.
+func hasPAC(t *testing.T, d wire.AuthDatum) bool {
+	t.Helper()
+	inner, err := wire.UnmarshalAuthorizationData(d.Data)
+	if err != nil {
+		return false
+	}
+	for _, e := range inner {
+		if e.Type == wire.ADWin2KPAC {
+			return true
+		}
+	}
+	return false
 }
 
 // A client's own authorization data reaches the issued ticket, which
@@ -94,7 +137,15 @@ func TestTicketAuthDataIsCarriedForward(t *testing.T) {
 	if kerr != nil {
 		t.Fatalf("refused: %v", kerr)
 	}
-	ad := ticketAuthDataOf(t, rep)
+	// No PAC here, and not by accident: tgsWithTGTAuthData
+	// re-seals the TGT with *only* the element it was given, so
+	// the presented ticket carries none and the issued one
+	// therefore carries none either.
+	tkt := openServiceTicket(t, rep)
+	ad, err := wire.AuthDataOf(tkt.AuthorizationData)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(ad) != 1 || string(ad[0].Data) != "carried" {
 		t.Errorf("the ticket carries %v", ad)
 	}
@@ -184,9 +235,14 @@ func TestAClientCannotSupplyKDCIssuedAuthData(t *testing.T) {
 	}
 }
 
-// An AS-issued ticket carries no authorization data whatever the
-// client sent, because upstream's copy paths both gate on
-// KRB5_TGS_REQ (:536 and :556).
+// An AS-issued ticket copies **nothing the client sent**, whatever it
+// sent, because upstream's two copy paths both gate on KRB5_TGS_REQ
+// (:536 and :556).
+//
+// It is not empty, though, and has not been since the KDC started
+// issuing a PAC: what a ticket carries is what the *KDC* put there.
+// So this asserts the shape rather than the absence -- one
+// AD-IF-RELEVANT holding one AD-WIN2K-PAC, and nothing else.
 func TestTheASExchangeCopiesNoAuthData(t *testing.T) {
 	k := testKDC(t)
 	req := asRequest([]string{"user"})
@@ -198,8 +254,43 @@ func TestTheASExchangeCopiesNoAuthData(t *testing.T) {
 		t.Fatalf("refused: %v", kerr)
 	}
 	tkt := decodeTicket(t, k, rep)
+	ad, err := wire.AuthDataOf(tkt.AuthorizationData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ad) != 1 || ad[0].Type != wire.ADIfRelevant {
+		t.Fatalf("the ticket carries %d elements: %v",
+			len(ad), ad)
+	}
+	inner, err := wire.UnmarshalAuthorizationData(ad[0].Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inner) != 1 || inner[0].Type != wire.ADWin2KPAC {
+		t.Errorf("the container holds %v", inner)
+	}
+}
+
+// And with PA-PAC-REQUEST(false) the ticket really is empty, which is
+// what every golden case has relied on -- declining is something a
+// client is entitled to do and this KDC honours it.
+func TestADeclinedPACLeavesTheTicketEmpty(t *testing.T) {
+	k := testKDC(t)
+	noPAC, err := wire.MarshalPAPACRequest(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := asRequest([]string{"user"})
+	req.PAData = append(req.PAData, wire.PAData{
+		Type: wire.PAPACRequest, Value: noPAC,
+	})
+	rep, kerr := as(t, k, req)
+	if kerr != nil {
+		t.Fatalf("refused: %v", kerr)
+	}
+	tkt := decodeTicket(t, k, rep)
 	if len(tkt.AuthorizationData.FullBytes) != 0 {
-		t.Errorf("an AS ticket carries authdata: % x",
+		t.Errorf("a declined PAC still travelled: % x",
 			tkt.AuthorizationData.FullBytes)
 	}
 }

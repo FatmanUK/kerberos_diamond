@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,11 @@ type Config struct {
 	// (DEFAULT_GROUPS_KDC against DEFAULT_GROUPS_CLIENT,
 	// plugins/preauth/spake/groups.c:59-60).
 	SPAKEGroups []int32
+
+	// DisablePAC turns the Windows PAC off for the whole realm,
+	// kdc.conf's disable_pac. Default false, which is upstream's:
+	// a realm issues PACs unless it says otherwise.
+	DisablePAC bool
 
 	// SPAKEIndicators are the authentication indicators a
 	// successful SPAKE exchange asserts, which is upstream's
@@ -300,6 +306,12 @@ func (c *Config) parseCrypto() []error {
 	// compared against a service's require_auth as strings.
 	c.SPAKEIndicators = strings.Fields(
 		os.Getenv("KD_SPAKE_INDICATORS"))
+	disable, err := parseBool("KD_DISABLE_PAC")
+	if err != nil {
+		errs = append(errs, err)
+	} else {
+		c.DisablePAC = disable
+	}
 	return errs
 }
 
@@ -347,4 +359,26 @@ func envOr(name, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseBool reads a boolean environment variable, unset meaning
+// false.
+//
+// A value that is neither true nor false is a fault rather than a
+// silent false, which is this package's standing rule: a typo in
+// KD_DISABLE_PAC that read as "off" would turn a feature on and say
+// nothing. strconv.ParseBool's spellings are a superset of the ones
+// krb5.conf accepts, which is the right direction for a transcribed
+// configuration to be wrong in.
+func parseBool(name string) (bool, error) {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(strings.ToLower(v))
+	if err != nil {
+		return false, fmt.Errorf("%s: %q is not a boolean",
+			name, v)
+	}
+	return b, nil
 }

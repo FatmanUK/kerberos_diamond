@@ -101,8 +101,18 @@ func (k *KDC) replyPAData(s *asState) ([]wire.PAData, error) {
 
 // ticket seals the EncTicketPart under the server's key with key
 // usage 2, and records the server's current key version on it.
+//
+// The authorization data is filled in before the encoding rather than
+// inside encTicketPart, because attaching a PAC *encodes the ticket
+// itself* to checksum it -- so the structure has to exist as a value
+// for a moment, which is also the shape upstream's
+// krb5_kdc_sign_ticket needs.
 func (k *KDC) ticket(s *asState) (*wire.Ticket, error) {
-	plain, err := k.encTicketPart(s)
+	part := k.encTicketPart(s)
+	if err := k.asAuthData(s, &part); err != nil {
+		return nil, err
+	}
+	plain, err := wire.MarshalEncTicketPart(part)
 	if err != nil {
 		return nil, err
 	}
@@ -126,9 +136,9 @@ func (k *KDC) ticket(s *asState) (*wire.Ticket, error) {
 	}, nil
 }
 
-// encTicketPart encodes what goes inside the ticket.
-func (k *KDC) encTicketPart(s *asState) ([]byte, error) {
-	return wire.MarshalEncTicketPart(wire.EncTicketPart{
+// encTicketPart is what goes inside the ticket.
+func (k *KDC) encTicketPart(s *asState) wire.EncTicketPart {
+	return wire.EncTicketPart{
 		Flags:  s.flags,
 		Key:    s.session,
 		CRealm: k.Realm,
@@ -147,7 +157,7 @@ func (k *KDC) encTicketPart(s *asState) ([]byte, error) {
 		StartTime: optStamp(s.start),
 		EndTime:   unstamp(s.end),
 		RenewTill: optStamp(s.renew),
-	})
+	}
 }
 
 // encPart seals the EncKDCRepPart under the client's long-term key

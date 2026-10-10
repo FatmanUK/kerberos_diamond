@@ -72,7 +72,15 @@ func (k *KDC) wrapTGSReply(
 // validation the *server* comes from the presented ticket as well
 // (do_tgs_req.c:1012-1016).
 func (k *KDC) tgsTicket(s *tgsState) (*wire.Ticket, error) {
-	plain, err := wire.MarshalEncTicketPart(s.encTicketPart())
+	part := s.encTicketPart()
+	// The PAC goes on before the encoding, because attaching one
+	// *encodes the ticket* to checksum it -- and it goes on here
+	// rather than in setAuthData because it is prepended to
+	// whatever that decided.
+	if err := k.tgsPAC(s, &part); err != nil {
+		return nil, err
+	}
+	plain, err := wire.MarshalEncTicketPart(part)
 	if err != nil {
 		return nil, err
 	}

@@ -186,9 +186,7 @@ func (k *KDC) localTGT() (
 	kvno uint32,
 	err error,
 ) {
-	name := store.UnparseName(k.Realm,
-		[]string{tgsName, k.Realm})
-	p, err := k.Store.Lookup(context.Background(), name)
+	p, err := k.localTGTEntry()
 	if err != nil {
 		return nil, 0, 0, err
 	}
@@ -200,4 +198,20 @@ func (k *KDC) localTGT() (
 	}
 	return raw, crypto.EncType(row.EType),
 		uint32(row.KVNO), nil
+}
+
+// localTGTEntry is the database entry for this realm's own
+// ticket-granting service, which both the CAMMAC verifier and the
+// PAC's privsvr signature are keyed from.
+func (k *KDC) localTGTEntry() (*store.Principal, error) {
+	name := store.UnparseName(k.Realm,
+		[]string{tgsName, k.Realm})
+	return k.Store.Lookup(context.Background(), name)
+}
+
+// tgtKVNO is the key version of that entry's current key, which the
+// PAC-signature retry counts back from.
+func (k *KDC) tgtKVNO() (int32, error) {
+	_, _, kvno, err := k.localTGT()
+	return int32(kvno), err
 }

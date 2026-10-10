@@ -203,9 +203,11 @@ Everything the plan file listed is done, so this list is now the live one.
    6803 camellia pair, which closes the only *non-deprecated* enctype
    gap. Everything upstream still supports and this project does not is
    deprecated, weak, or both.
-8. **The Windows PAC**, last but one. The container itself is
-   implemented and anchored against bytes three generations of Windows
-   KDC produced — see §3.1 — but the KDC does not issue one yet.
+8. **The Windows PAC**, last but one. Done: the container is anchored
+   against bytes three generations of Windows KDC produced, and the
+   KDC now issues a signed PAC in every ticket unless the client
+   declines one or the realm turns them off — see §3.1. Still to do is
+   `PA-PAC-OPTIONS` and then S4U.
 9. **S4U2Self and S4U2Proxy**, last.
 
 ## 3. Project State
@@ -468,6 +470,31 @@ are not "fixed" back by accident.
   checked against a key the client may not hold. The checksum's length also
   comes from its *type* and never from the buffer, because [MS-PAC] 2.8
   allows an RODCIdentifier trailer after it.
+- **The gate is five refusals in upstream's order** (`handle_pac`,
+  `kdc_authdata.c:477-493`): the server's `NO_AUTH_DATA_REQUIRED` flag,
+  which turns off the PAC *and* the authentication indicators both; the
+  realm's `KD_DISABLE_PAC`; an anonymous ticket; an AS request that
+  declined one; and a TGS request whose presented ticket carried none. The
+  last is why a client that declined at the AS exchange gets none in any
+  service ticket either — a TGS request can neither ask for a PAC nor
+  decline one.
+- **`PA-PAC-REQUEST` defaults to yes three times over**: no padata at all,
+  padata without the element, and an element that *fails to decode*, because
+  upstream initialises its answer to TRUE and only a successful decode
+  overwrites it (`kdc_preauth.c:1587`, `:1598-1602`). Declining is something
+  a client has to do correctly on purpose.
+- **A PAC signature carries no key version**, so a KDC that has rolled its
+  krbtgt key tries the two previous ones before refusing
+  (`get_verified_pac`, `kdc_util.c:613-620`). Two is upstream's number, and
+  the limit is what stops a rollover history becoming a search space.
+- **On a presented TGT only the server signature is checked**, privsvr left
+  out entirely (`:601-605`) — a TGT's server signature was already made with
+  the krbtgt key, and on a cross-realm TGT the privsvr key belongs to
+  another realm.
+- **CLIENT_INFO is copied from the presented PAC and not rebuilt** on an
+  ordinary TGS request (`:544-553`), because rebuilding it would quietly
+  replace the name in a ticket being re-issued. Which means the realm-less
+  unparse rule above is applied once, at the AS exchange, and then carried.
 - **`crypto.ProfileForCksum` exists for this and nothing else yet.** There
   is no checksum table in this project, because every keyed checksum a
   Kerberos message carries is the one its enctype requires. A PAC is the
@@ -590,29 +617,28 @@ are not "fixed" back by accident.
 
 **The AS exchange:**
 
-- **No Windows PAC.** A stock MIT KDC puts a signed MS-PAC in every AS
-  ticket unless the client declines one (`kdc/kdc_authdata.c:479-493`,
-  `include_pac_p` at `kdc/kdc_preauth.c:1581-1609`). This KDC issues none:
-  The deprioritisation is the one in **Priorities** below and not a
-  judgement about size — reading `pac.c` for the plan that follows this
-  one found the earlier description here wrong on both counts. There is
-  no NDR in it at all (`authdata.h:46-48` says buffer contents are left
-  to the application; the only NDR upstream has is `kdc/ndr.c`, for
-  `S4U_DELEGATION_INFO` alone), and there are three keyed checksums, or
-  four on a service ticket. A stock MIT KDC also emits no `LOGON_INFO`
-  buffer at all: only the *test* KDB module implements `issue_pac`
-  (`plugins/kdb/test/kdb_test.c:820`), so with db2 the dispatch returns
-  `KRB5_PLUGIN_OP_NOTSUPP` and `handle_pac` swallows it
-  (`kdc/kdc_authdata.c:511-512`). The golden harness declines the PAC with
-  `PA-PAC-REQUEST(false)` — something an unmodified client is entitled to do
-  — so the comparison covers the whole reply with no skipped fields, and the
-  gap is recorded here instead of hidden in an exemption. A Windows client
-  expecting a PAC will not be satisfied by this KDC yet.
+- **A signed Windows PAC in every ticket**, unless the client declines one
+  or the realm turns them off (`handle_pac`, `kdc/kdc_authdata.c:456-570`,
+  `include_pac_p` at `kdc/kdc_preauth.c:1581-1609`). It is **payload-free**,
+  and that is upstream's behaviour and not a stub: `KRB5_PAC_LOGON_INFO` can
+  only reach a PAC through a KDB module's `issue_pac` method, and only the
+  *test* module implements one (`plugins/kdb/test/kdb_test.c:820`), so with
+  db2 the dispatch returns `KRB5_PLUGIN_OP_NOTSUPP` and `handle_pac`
+  swallows it (`:511-512`). What travels is the CLIENT_INFO buffer and the
+  signatures — which is exactly what S4U2Self needs.
 
-  `internal/pac` now implements the container, the CLIENT_INFO buffer and
-  all four checksums, and verifies against PACs issued by Windows Server
-  2003, 2008 and 2022 — but nothing attaches one to a ticket, so the
-  paragraph above still describes what a client sees.
+  An earlier description here called the PAC "NDR-encoded ... carrying two
+  keyed checksums", which was wrong on both counts and was corrected when
+  `pac.c` was read for the plan: there is no NDR in it at all
+  (`authdata.h:46-48` says buffer contents are left to the application; the
+  only NDR upstream has is `kdc/ndr.c`, for `S4U_DELEGATION_INFO` alone),
+  and there are three keyed checksums, or four on a service ticket.
+
+  The golden harness still declines the PAC with `PA-PAC-REQUEST(false)` —
+  something an unmodified client is entitled to do — so the field-by-field
+  comparison covers the whole reply with no skipped fields. Bringing the
+  PAC into that comparison is the next step and is deliberately separate,
+  because every existing case's `tkt.authz-data` changes when it happens.
 - **FAST is implemented and advertised, both exchanges.** Announced in both
   the places upstream announces it: an empty `PA-FX-FAST` leading the preauth
   hint list (`kdc/kdc_preauth.c:999-1001`), which is what lets `kinit -T`

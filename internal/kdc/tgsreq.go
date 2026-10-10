@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
+	"github.com/FatmanUK/kerberos_diamond/internal/pac"
 	"github.com/FatmanUK/kerberos_diamond/internal/store"
 	"github.com/FatmanUK/kerberos_diamond/internal/wire"
 )
@@ -24,6 +25,20 @@ type tgsState struct {
 
 	header    wire.EncTicketPart
 	headerSrv wire.PrincipalName
+
+	// headerRaw is the key the presented ticket was sealed with
+	// and headerEType the enctype it was sealed under, kept
+	// because the PAC's server signature is made with that same
+	// key -- so verifying one needs the key that opened the
+	// ticket rather than any key this KDC would choose now.
+	headerRaw   []byte
+	headerEType crypto.EncType
+
+	// headerPAC is the presented ticket's PAC, verified, or nil
+	// if it carried none. Nil is ordinary: a ticket issued to a
+	// client that declined a PAC has none, and nor has one from a
+	// realm that issues none.
+	headerPAC *pac.PAC
 
 	// headerRealm is the realm the presented ticket was issued
 	// in, which is not this realm for a cross-realm request.
@@ -96,30 +111,14 @@ func (k *KDC) TGS(
 	req wire.TGSReq,
 ) (*wire.TGSRep, *wire.KRBError) {
 	s := &tgsState{req: req, raw: msg, now: stamp(k.now())}
+	// The AP-REQ comes first and on its own, because everything
+	// after it reports through the FAST tunnel and the tunnel is
+	// inside the ticket this step opens.
 	if code, status := k.readAPReq(s); code != 0 {
 		return nil, k.krbError(code, status, nil)
 	}
 	cname := s.header.CName
-	if code, status := k.findFastTGS(s); code != 0 {
-		return nil, k.fastError(s, code, status, &cname)
-	}
-	if code, status := k.tgsServer(s); code != 0 {
-		return nil, k.fastError(s, code, status, &cname)
-	}
-	if code, status := k.readSecondTicket(s); code != 0 {
-		return nil, k.fastError(s, code, status, &cname)
-	}
-	if code, status := k.buildTransited(s); code != 0 {
-		return nil, k.fastError(s, code, status, &cname)
-	}
-	if code, status := k.tgsPolicy(s); code != 0 {
-		return nil, k.fastError(s, code, status, &cname)
-	}
-	k.tgsTimes(s)
-	if code, status := k.tgsSessionKey(s); code != 0 {
-		return nil, k.fastError(s, code, status, &cname)
-	}
-	if code, status := k.setAuthData(s); code != 0 {
+	if code, status := k.tgsSteps(s); code != 0 {
 		return nil, k.fastError(s, code, status, &cname)
 	}
 	rep, err := k.tgsAssemble(s)
@@ -128,6 +127,43 @@ func (k *KDC) TGS(
 			"ENCODE_REPLY", &cname)
 	}
 	return rep, nil
+}
+
+// tgsSteps runs everything between opening the presented ticket and
+// building the reply, in upstream's order.
+//
+// The order is not free. The server has to be found before the second
+// ticket can be judged against it, the transited path before the
+// policy that checks it, the times before the session key that the
+// reply is sized against, and the PAC before the authorization data
+// because a PAC that does not verify refuses the request rather than
+// being left out of it.
+func (k *KDC) tgsSteps(s *tgsState) (int32, string) {
+	for _, step := range []func(*tgsState) (int32, string){
+		k.findFastTGS,
+		k.tgsServer,
+		k.readSecondTicket,
+		k.buildTransited,
+		k.tgsPolicy,
+		k.tgsTimesStep,
+		k.tgsSessionKey,
+		k.verifyHeaderPAC,
+		k.setAuthData,
+	} {
+		if code, status := step(s); code != 0 {
+			return code, status
+		}
+	}
+	return 0, ""
+}
+
+// tgsTimesStep is tgsTimes in the shape the sequence above takes. The
+// times cannot fail: every one of them is a clamp rather than a
+// check, and what would have been a refusal was already decided by
+// tgsPolicy.
+func (k *KDC) tgsTimesStep(s *tgsState) (int32, string) {
+	k.tgsTimes(s)
+	return 0, ""
 }
 
 // readAPReq validates the ticket and authenticator the client
@@ -185,7 +221,18 @@ func (k *KDC) openHeader(
 	if tsAfter(s.now, stamp(tkt.EndTime)) {
 		return wire.ErrCodeTktExpired, "TICKET EXPIRED"
 	}
+	s.headerRaw = key
+	s.headerEType = crypto.EncType(ap.Ticket.EncPart.EType)
 	return 0, ""
+}
+
+// headerKey is the presented ticket's sealing key as a keyblock,
+// which is what a PAC's server signature was made with.
+func (s *tgsState) headerKey() wire.EncryptionKey {
+	return wire.EncryptionKey{
+		KeyType:  int32(s.headerEType),
+		KeyValue: s.headerRaw,
+	}
 }
 
 // ticketKey finds the key a presented ticket was sealed with.
