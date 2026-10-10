@@ -61,6 +61,17 @@ func (k *KDC) addTGSIndicators(
 	s *tgsState,
 	ad wire.AuthorizationData,
 ) (wire.AuthorizationData, int32, string) {
+	// **An S4U2Self request carries no indicators at all**, and
+	// neither extracts nor checks them (do_tgs_req.c:761-769 and
+	// :894-903 both gate on s4u2self being absent). The reason is
+	// the whole point of S4U2Self: the subject never
+	// authenticated here, so there is nothing to say about how
+	// they did it, and a ticket claiming an indicator they did
+	// not earn would be worse than one claiming none.
+	// t_authdata.py:239-245 asserts the absence from the outside.
+	if s.s4u != nil {
+		return ad, 0, ""
+	}
 	tgtKey, tgtEType, tgtKVNO, err := k.localTGT()
 	if err != nil {
 		return nil, wire.ErrCodeGeneric, "LOCAL TGT KEY"

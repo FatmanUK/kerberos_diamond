@@ -17,16 +17,27 @@ func (k *KDC) tgsAssemble(s *tgsState) (*wire.TGSRep, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A TGS-REP carries no cleartext padata of its own.
+	// A TGS-REP carries almost no cleartext padata of its own.
 	// return_padata's etype-info is an AS-only thing -- it
 	// describes the client's long-term key, which a TGS exchange
-	// never touches -- so the only thing that ever appears here
-	// is the FAST container.
+	// never touches -- so what appears here is the FAST container
+	// and, for an S4U2Self request, the PA-S4U-X509-USER echo.
+	//
+	// That echo really is cleartext and not encrypted padata:
+	// kdc_make_s4u2self_rep adds it to reply->padata
+	// (kdc_util.c:1489-1491). See s4uSelfRep for why.
+	pa, err := k.s4uSelfRep(s)
+	if err != nil {
+		return nil, err
+	}
 	rep := &wire.TGSRep{
-		CRealm:  s.header.CRealm,
-		CName:   s.header.CName,
+		CRealm:  s.ticketCRealm(),
+		CName:   s.ticketCName(),
 		Ticket:  *tkt,
 		EncPart: wire.EncryptedData{},
+	}
+	if pa != nil {
+		rep.PAData = append(rep.PAData, *pa)
 	}
 	if err := k.wrapTGSReply(s, rep); err != nil {
 		return nil, err
@@ -122,8 +133,8 @@ func (s *tgsState) encTicketPart() wire.EncTicketPart {
 	return wire.EncTicketPart{
 		Flags:  s.flags,
 		Key:    s.session,
-		CRealm: s.header.CRealm,
-		CName:  s.header.CName,
+		CRealm: s.ticketCRealm(),
+		CName:  s.ticketCName(),
 		// buildTransited decided this: the presented ticket's
 		// path, with this realm's predecessor added when the
 		// request crossed a second boundary.
@@ -265,4 +276,27 @@ func (k *KDC) tgsNegotiationPAData(
 		{Type: wire.PAReqEncPARep, Value: der},
 		{Type: wire.PAFXFast},
 	}, nil
+}
+
+// ticketCName and ticketCRealm are the client the issued ticket
+// names, which is the presented ticket's client for an ordinary
+// request and the **impersonated** principal for a final S4U request
+// (do_tgs_req.c:757-759).
+//
+// "Final" is the distinction: an S4U request that this realm answers
+// with a referral names the impersonator, because the ticket it
+// issues is a cross-realm TGT for the server to spend elsewhere, not
+// the service ticket the server asked for.
+func (s *tgsState) ticketCName() wire.PrincipalName {
+	if s.s4u != nil && !s.referral {
+		return *s.s4u.UserID.UserName
+	}
+	return s.header.CName
+}
+
+func (s *tgsState) ticketCRealm() string {
+	if s.s4u != nil && !s.referral {
+		return s.s4u.UserID.UserRealm
+	}
+	return s.header.CRealm
 }

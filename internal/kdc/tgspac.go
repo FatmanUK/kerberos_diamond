@@ -149,7 +149,8 @@ func (k *KDC) tgsPAC(
 		s.headerPAC) {
 		return nil
 	}
-	fresh, err := copyPACBuffers(s.headerPAC)
+	ci := s4uPACClient(s, part)
+	fresh, err := copyPACBuffers(s.headerPAC, ci == nil)
 	if err != nil {
 		return err
 	}
@@ -158,7 +159,7 @@ func (k *KDC) tgsPAC(
 		return err
 	}
 	key, etype, _ := s.sealingKey()
-	return pac.SignTicket(part, fresh, s.issuedFor(), nil,
+	return pac.SignTicket(part, fresh, s.issuedFor(), ci,
 		wire.EncryptionKey{
 			KeyType: int32(etype), KeyValue: key,
 		}, privsvr)
@@ -172,10 +173,16 @@ func (k *KDC) tgsPAC(
 // over the new ticket, which is the whole point of re-signing -- and
 // the ticket checksum is not either, because SignTicket makes a fresh
 // one over the ticket being issued.
-func copyPACBuffers(subject *pac.PAC) (*pac.PAC, error) {
+func copyPACBuffers(
+	subject *pac.PAC,
+	withClient bool,
+) (*pac.PAC, error) {
 	out := pac.New()
 	for _, typ := range subject.Types() {
 		if !copiedPACType(typ) {
+			continue
+		}
+		if typ == pac.TypeClientInfo && !withClient {
 			continue
 		}
 		content, err := subject.Get(typ)
@@ -212,3 +219,64 @@ func copiedPACType(typ uint32) bool {
 // reports, which is upstream's KRB5KRB_AP_ERR_MODIFIED.
 var errPACUnverified = errors.New(
 	"no krbtgt key version verifies the PAC")
+
+// s4uPACClient is the CLIENT_INFO the new PAC should be built with,
+// or nil to copy the presented PAC's across (handle_pac's three-way
+// branch, kdc_authdata.c:531-553).
+//
+// **An S4U2Self request must not copy it**, and that is the whole
+// reason this function exists: the presented ticket is the
+// *impersonator's* TGT, so its PAC names the impersonator, and
+// carrying that into a ticket whose client is somebody else would
+// produce a PAC that disagrees with the ticket around it. A service
+// reading the PAC would see the wrong user.
+//
+// The realm appears only when this realm is answering an S4U request
+// with a **referral** (:533-537): the ticket then crosses a realm
+// boundary, so the name in it has to say which realm the subject
+// belongs to.
+func s4uPACClient(
+	s *tgsState,
+	part *wire.EncTicketPart,
+) *pac.ClientInfo {
+	if s.s4u == nil {
+		return nil
+	}
+	if s.referral {
+		ci := pacClientInfo(clientInfoName(
+			*s.s4u.UserID.UserName,
+			s.s4u.UserID.UserRealm), part.AuthTime)
+		return &ci
+	}
+	ci := pacClientInfo(
+		clientInfoName(part.CName, ""), part.AuthTime)
+	return &ci
+}
+
+// checkNormalPAC is check_normal_tgs_pac (tgs_policy.c:717-740): on
+// an ordinary TGS request, if the presented ticket carries a PAC then
+// that PAC has to name the ticket's own client.
+//
+// **A PAC is not required** (:721-723), which is what keeps this KDC
+// able to answer for tickets it issued before it issued any and for
+// realms that issue none. What is refused is a PAC that names
+// somebody *else*, because a ticket whose PAC and whose cname
+// disagree is one a service would read two different answers out of.
+//
+// Upstream has a second arm here for an intermediate RBCD request,
+// where the header PAC legitimately names the impersonated client and
+// is checked through verify_deleg_pac instead (:729-733). That needs
+// KRB5_PAC_DELEGATION_INFO decoded, which is NDR and belongs with
+// cross-realm S4U2Proxy; until then an RBCD request cannot arrive,
+// because cname-in-addl-tkt is refused outright.
+func (k *KDC) checkNormalPAC(s *tgsState) (int32, string) {
+	if s.headerPAC == nil {
+		return 0, ""
+	}
+	want := pacClientInfo(
+		clientInfoName(s.header.CName, ""), s.header.AuthTime)
+	if s.headerPAC.VerifyClientInfo(want) != nil {
+		return wire.ErrCodeBadOption, "HEADER_PAC"
+	}
+	return 0, ""
+}

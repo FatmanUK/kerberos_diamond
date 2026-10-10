@@ -40,6 +40,25 @@ type tgsState struct {
 	// realm that issues none.
 	headerPAC *pac.PAC
 
+	// s4u is the S4U2Self request, normalised to the newer of the
+	// two padata shapes, or nil for an ordinary request.
+	// s4uLegacy records that it arrived as the older PA-FOR-USER,
+	// which gets no reply padata at all.
+	s4u       *wire.PAS4UX509User
+	s4uLegacy bool
+
+	// s4uClient is the impersonated principal's database entry,
+	// or nil when the subject belongs to another realm -- which
+	// is the distinction four of checkS4USelf's branches turn on.
+	s4uClient *store.Principal
+
+	// s4uNoAuthDataWaived records that the server asked for no
+	// authorization data and an S4U2Self request overrode it,
+	// which upstream does for consistency with Active Directory:
+	// the requesting service probably needs the PAC for a later
+	// S4U2Proxy (do_tgs_req.c:706-716).
+	s4uNoAuthDataWaived bool
+
 	// headerRealm is the realm the presented ticket was issued
 	// in, which is not this realm for a cross-realm request.
 	headerRealm string
@@ -132,22 +151,24 @@ func (k *KDC) TGS(
 // tgsSteps runs everything between opening the presented ticket and
 // building the reply, in upstream's order.
 //
-// The order is not free. The server has to be found before the second
-// ticket can be judged against it, the transited path before the
-// policy that checks it, the times before the session key that the
-// reply is sized against, and the PAC before the authorization data
-// because a PAC that does not verify refuses the request rather than
-// being left out of it.
+// The order is not free. The header ticket's PAC comes first because
+// S4U2Self's policy reads it and because a PAC that does not verify
+// refuses the request rather than being left out of it. The server
+// has to be found before the S4U2Self padata can be judged against it
+// and before the second ticket can be, the transited path before the
+// policy that checks it, and the times before the session key the
+// reply is sized against.
 func (k *KDC) tgsSteps(s *tgsState) (int32, string) {
 	for _, step := range []func(*tgsState) (int32, string){
+		k.verifyHeaderPAC,
 		k.findFastTGS,
 		k.tgsServer,
+		k.readS4USelf,
 		k.readSecondTicket,
 		k.buildTransited,
 		k.tgsPolicy,
 		k.tgsTimesStep,
 		k.tgsSessionKey,
-		k.verifyHeaderPAC,
 		k.setAuthData,
 	} {
 		if code, status := step(s); code != 0 {
@@ -513,7 +534,7 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 	if code, status := k.checkHeaderServer(s); code != 0 {
 		return code, status
 	}
-	if code, status := k.checkLineage(s); code != 0 {
+	if code, status := k.tgsLineage(s); code != 0 {
 		return code, status
 	}
 	if code, status := k.checkU2U(s); code != 0 {
@@ -525,6 +546,29 @@ func (k *KDC) tgsPolicy(s *tgsState) (int32, string) {
 		return code, status
 	}
 	return k.checkTransited(s)
+}
+
+// tgsLineage is the middle of the constraint block: where the
+// presented ticket's client is allowed to have come from.
+//
+// **S4U2Self's constraints replace the lineage check**, and that is
+// an if/else in the C rather than two checks (tgs_policy.c:699-707).
+// It has to be: the lineage check asks whether the presented ticket's
+// client belongs where the request says, and for an S4U2Self request
+// that answer is decided by checkS4USelf's four-way table instead.
+//
+// And for an ordinary request the header ticket's PAC has to name the
+// ticket's own client (check_normal_tgs_pac, :717-727), which is
+// skipped for both kinds of S4U because their PACs name somebody else
+// on purpose.
+func (k *KDC) tgsLineage(s *tgsState) (int32, string) {
+	if s.s4u != nil {
+		return k.checkS4USelf(s)
+	}
+	if code, status := k.checkLineage(s); code != 0 {
+		return code, status
+	}
+	return k.checkNormalPAC(s)
 }
 
 // nonTGTOptions are the options under which the presented ticket's
@@ -638,6 +682,7 @@ func (k *KDC) checkTransited(s *tgsState) (int32, string) {
 func (k *KDC) tgsTimes(s *tgsState) {
 	opts := s.req.Body.Options
 	s.flags = tgsTicketFlags(opts, s.server, s.header)
+	s.flags = k.s4uSelfForwardable(s, s.flags)
 	if s.transitChecked {
 		s.flags |= wire.FlagTransitedPolicyChecked
 	}

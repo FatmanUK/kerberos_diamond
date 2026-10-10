@@ -3,6 +3,7 @@ package kdc
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/FatmanUK/kerberos_diamond/internal/crypto"
 	"github.com/FatmanUK/kerberos_diamond/internal/pac"
@@ -197,3 +198,14 @@ func escapeComponent(s string, noRealm bool) string {
 // message naming the value (kdc_util.c:543-547).
 var errBadPrivsvrEnctype = errors.New(
 	"invalid pac_privsvr_enctype")
+
+// pacClientInfo is a PAC CLIENT_INFO value: a name and the authtime
+// of the ticket it was signed in.
+//
+// Both are compared together, which is what stops a PAC being lifted
+// out of one ticket and dropped into another -- a PAC whose name
+// agrees and whose authtime does not was issued in a different
+// ticket.
+func pacClientInfo(name string, authTime time.Time) pac.ClientInfo {
+	return pac.ClientInfo{Name: name, AuthTime: authTime}
+}

@@ -184,7 +184,18 @@ const (
 	PAReqEncPARep  int32 = 149
 	PAPACRequest   int32 = 128
 	PAFXCookie     int32 = 133
-	PAFXFast       int32 = 136
+
+	// PATypeForUser and PATypeS4UX509User are the two S4U2Self
+	// requests, the legacy one from Windows 2003 and the newer
+	// one from Windows 2008 ([MS-SFU] 2.2.1 and 2.2.2; krb5.hin).
+	// A KDC seeing both reads the newer and ignores the other
+	// (kdc_util.c:1570-1586).
+	//
+	// The names carry "Type" because PAForUser and PAS4UX509User
+	// are the structures themselves, in s4u.go.
+	PATypeForUser     int32 = 129
+	PATypeS4UX509User int32 = 130
+	PAFXFast          int32 = 136
 
 	// PAPACOptions is what a client uses to say which [MS-KILE]
 	// PAC behaviours it understands, and what the KDC echoes back

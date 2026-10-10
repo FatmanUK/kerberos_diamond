@@ -206,10 +206,13 @@ Everything the plan file listed is done, so this list is now the live one.
 8. **The Windows PAC**, last but one. Done: the container is anchored
    against bytes three generations of Windows KDC produced, the KDC
    issues a signed PAC in every ticket unless the client declines one
-   or the realm turns them off, and all 88 golden cases compare it —
+   or the realm turns them off, and all 91 golden cases compare it —
    with one case comparing the two KDCs' PACs octet for octet.
    `PA-PAC-OPTIONS` is implemented and echoed too. Still to do is S4U.
-9. **S4U2Self and S4U2Proxy**, last.
+9. **S4U2Self and S4U2Proxy**, last. S4U2Self is done — a stock
+   `kvno -I` impersonates against this KDC, and the differential
+   harness compares the exchange field for field. S4U2Proxy, RBCD and
+   the NDR that cross-realm RBCD needs are what remain.
 
 ## 3. Project State
 
@@ -519,6 +522,65 @@ are not "fixed" back by accident.
   lookup in the other direction — and the right answer for a type this
   project does not implement is "unsupported" rather than a wrong verdict.
 
+**S4U2Self:**
+
+- **A service can get a ticket to itself naming a user it never spoke
+  to**, from either padata shape: the legacy `PA-FOR-USER` a Windows
+  2003 server sends and the `PA-S4U-X509-USER` a 2008 one sends. The
+  newer wins when both are present (`kdc_util.c:1570-1586`), and a
+  legacy request gets **no reply padata at all**.
+- **The two checksums are different constructions, and neither is
+  obvious.** The newer one is over the **received octets** of the
+  user-id field (`fetch_asn1_field`, `:1376`) — not a re-encoding,
+  with a re-encode only as a fallback, which is the same tolerance the
+  TGS body checksum has and for the same reason. The legacy one is
+  not over DER at all: a **little-endian** int32 name type, then the
+  name components, then the realm, then the auth-package, run together
+  with no separators and no lengths (`:1264-1288`). Little-endian in a
+  protocol that is big-endian everywhere else, and a concatenation
+  that collides — `a/b` and `ab` in one realm checksum identically,
+  the same shape of collision the default salt has.
+- **The four legal combinations are a table** and upstream writes them
+  out (`tgs_policy.c:285-296`): local TGT with a local user and a
+  local server; and three cross-realm shapes for the initial,
+  intermediate and final hops. Three of the four refusals that
+  complement them are annotated *"match Windows error"* in the C,
+  which is a reason to copy the codes rather than choose them.
+- **The header ticket's PAC is required**, and its absence is
+  `KDC_ERR_TGT_REVOKED` (`:328-332`). That is the corollary that made
+  E1 and E2 prerequisites rather than neighbours — and it means a TGT
+  obtained with `PA-PAC-REQUEST(false)` can never be used for
+  S4U2Self.
+- **The PAC's CLIENT_INFO is rebuilt, not copied.** The presented
+  ticket is the *impersonator's* TGT, so its PAC names the
+  impersonator; carrying that into a ticket whose client is somebody
+  else would give a service two different answers about who it is
+  talking to.
+- **Three things are waived, each for the same reason.** The subject's
+  password expiry and `REQUIRES_PWCHANGE` are cleared before policy
+  sees them, "as Windows does, since S4U2Self is not password
+  authentication" (`kdc_util.c:1611-1615`); and authentication
+  indicators are skipped entirely (`do_tgs_req.c:761-769`,
+  `:894-903`), because the subject never authenticated and a ticket
+  claiming an indicator they did not earn would satisfy a service's
+  `require_auth` by impersonation.
+- **A server that asked for no authorization data gets a PAC anyway**
+  on an S4U2Self request (`do_tgs_req.c:706-716`) — the one place a
+  principal's own flag is overridden rather than honoured, because the
+  service probably needs the PAC for a later S4U2Proxy.
+- **`s4u2self_forwardable` is a no-op here, and so is upstream's
+  against db2.** A server with `+ok_to_auth_as_delegate` keeps the
+  flag; any other keeps it too unless it has traditional S4U2Proxy
+  delegation targets, and that relation is still to come. Upstream's
+  `krb5_db_check_allowed_to_delegate` answers
+  `KRB5_PLUGIN_OP_NOTSUPP` with db2 and the flag is left alone
+  (`kdc_util.c:1637-1642`), so this agrees with the oracle rather than
+  merely being unfinished.
+- **`check_normal_tgs_pac` came with it** (`tgs_policy.c:717-740`): on
+  an *ordinary* TGS request a PAC is not required, but one that is
+  present must name the ticket's own client. A ticket whose PAC and
+  whose cname disagree is one a service reads two answers out of.
+
 **The TGS exchange:**
 
 - **Everything but S4U and cross-realm issues a ticket.** A client spends a
@@ -651,7 +713,7 @@ are not "fixed" back by accident.
   only NDR upstream has is `kdc/ndr.c`, for `S4U_DELEGATION_INFO` alone),
   and there are three keyed checksums, or four on a service ticket.
 
-  **The golden harness no longer declines it**, so all 88 cases compare a
+  **The golden harness no longer declines it**, so all 91 cases compare a
   PAC this project built against one the C built. One case still declines,
   because declining is behaviour too (`t_authdata.py:288-294`), and one
   compares the two PACs **octet for octet** — see §6.

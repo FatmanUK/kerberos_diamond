@@ -105,3 +105,22 @@ const (
 	// (krb5.hin:1006).
 	UsagePAFXCookie Usage = 513
 )
+
+// The two [MS-SFU] usages the S4U2Self padata is signed at
+// (krb5.hin:981-983).
+//
+// They collide with KRB5_KEYUSAGE_PA_SAM_CHALLENGE_TRACKID and
+// KRB5_KEYUSAGE_PA_SAM_RESPONSE, and upstream's header says so in a
+// comment above each. The collision is harmless here for the reason
+// it is harmless there: SAM-2 is effectively dead and is a declared
+// non-goal, so no message in this project is ever ambiguous about
+// which of the two a usage means.
+//
+// Which of the pair signs the *reply* is the client's choice:
+// S4U-OPTS-USE-REPLY-KEY-USAGE asks for 27, and without it the reply
+// is signed at 26 like the request (kdc_make_s4u2self_rep,
+// kdc_util.c:1479-1482).
+const (
+	UsageS4UX509UserRequest Usage = 26
+	UsageS4UX509UserReply   Usage = 27
+)

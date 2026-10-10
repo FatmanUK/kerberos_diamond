@@ -28,6 +28,7 @@ const (
 	ErrCodePADataTypeNoSupp   int32 = 16
 	ErrCodeTrTypeNoSupp       int32 = 17
 	ErrCodeClientRevoked      int32 = 18
+	ErrCodeTGTRevoked         int32 = 20
 	ErrCodeKeyExpired         int32 = 23
 	ErrCodePreauthFailed      int32 = 24
 	ErrCodePreauthRequired    int32 = 25
