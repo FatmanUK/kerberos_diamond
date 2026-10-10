@@ -71,9 +71,17 @@ func assertSameAuthData(t *testing.T, cx, gx Exchange) {
 			t.Errorf("element %d: types %d and %d", i,
 				c[i].Type, g[i].Type)
 		}
-		if string(c[i].Data) != string(g[i].Data) {
-			t.Errorf("element %d: data %q and %q", i,
-				c[i].Data, g[i].Data)
+		// Compared by shape, not by octets, because one of
+		// these elements is now a PAC and a service ticket's
+		// PAC cannot be byte-identical between two KDCs --
+		// its ticket signature covers the session key, which
+		// each side generates afresh. See pacShape, and
+		// TestThePACsAreIdentical for the case where byte
+		// equality does hold.
+		a, b := elementShape(c[i]), elementShape(g[i])
+		if a != b {
+			t.Errorf("element %d:\n oracle:  %s\n"+
+				"diamond: %s", i, a, b)
 		}
 	}
 }

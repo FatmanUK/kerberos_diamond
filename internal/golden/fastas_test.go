@@ -27,11 +27,16 @@ type armoredAS struct {
 // buildArmoredAS assembles one from an armor TGT the caller already
 // holds. inner is the padata that goes *inside* the tunnel, and
 // getting it there is the whole point: the outer request's padata
-// holds only PA-FX-FAST. The first draft of this passed the body
-// alone and dropped the PA-PAC-REQUEST(false) that declines a Windows
-// PAC, so the C KDC put a signed one in its ticket and the Go KDC did
-// not -- which the comparison reported as 182 octets of authorization
-// data.
+// holds only PA-FX-FAST.
+//
+// The first draft of this passed the body alone and dropped the
+// request's padata, which at the time included the
+// PA-PAC-REQUEST(false) that declined a Windows PAC -- so the C KDC
+// put a signed one in its ticket and the Go KDC did not, and the
+// comparison reported 182 octets of authorization data. Both sides
+// issue a PAC now, so that particular symptom has gone; what the note
+// still records is that padata which does not reach the inside of the
+// tunnel has not been sent at all.
 func buildArmoredAS(
 	t *testing.T,
 	g tgt,
@@ -313,11 +318,10 @@ func TestFASTASExchangeMatchesTheC(t *testing.T) {
 	// way. A client would use one it already held.
 	g, _ := getTGTFromTheC(t, ctx, o)
 	req := asRequest(t, UserName, in(requestedLife))
-	// The request's own padata goes inside the tunnel,
-	// PA-PAC-REQUEST included, plus a PA-REQ-ENC-PA-REP so the
-	// reply checksum is exercised here too -- it is keyed with
-	// the *strengthened* key under FAST, which nothing else would
-	// catch.
+	// The request's own padata goes inside the tunnel, plus a
+	// PA-REQ-ENC-PA-REP so the reply checksum is exercised here
+	// too -- it is keyed with the *strengthened* key under FAST,
+	// which nothing else would catch.
 	inner := append(req.PAData,
 		wire.PAData{Type: wire.PAReqEncPARep})
 	a := buildArmoredAS(t, g, req.Body, inner)

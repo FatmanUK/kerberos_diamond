@@ -24,27 +24,27 @@ const requestedLife = 8 * time.Hour
 // Exactly the same encoded bytes go to both, which is the only way to
 // be sure a difference is in the answer rather than in the question.
 //
-// It carries PA-PAC-REQUEST(false), and that is a deliberate
-// narrowing of what is compared. A stock MIT KDC puts a signed
-// Windows PAC in every AS ticket unless the client declines one
-// (kdc/kdc_authdata.c:479-493, include_pac_p at
-// kdc/kdc_preauth.c:1581-1609), and this project issues none --
-// MS-PAC is NDR-encoded Windows interop with two keyed checksums in
-// it and is nowhere near the AS slice. Declining it is something an
-// unmodified client is entitled to do, so the harness does that
-// rather than reconfiguring the C KDC or exempting the field: the
-// comparison then covers the whole structure with no holes in it, and
-// the gap is recorded in BOOTSTRAP.md §3.3 rather than hidden in a
-// skipped field.
+// **It no longer declines the PAC, and that is the point of E3.** For
+// most of this project's life it carried PA-PAC-REQUEST(false),
+// because a stock MIT KDC puts a signed Windows PAC in every AS
+// ticket unless the client declines one (kdc/kdc_authdata.c:477-493,
+// include_pac_p at kdc/kdc_preauth.c:1581-1609) and this project
+// issued none. Declining is something an unmodified client is
+// entitled to do, so the harness did that rather than exempting the
+// field.
+//
+// Now both sides issue one, so the field is compared like any other
+// -- and it is the most demanding comparison in the harness, because
+// a PAC is deterministic given the same keys, authtime and client
+// name. There is no confounder in it: every octet is either structure
+// or a keyed checksum over structure, and both sides hold the same
+// keys. See TestThePACsAreIdentical.
+//
+// One case still declines, because declining is behaviour too and
+// t_authdata.py:288-294 tests it -- TestDecliningThePACMatchesTheC.
 func asRequest(t *testing.T, name string, till time.Time) wire.ASReq {
 	t.Helper()
-	noPAC, err := wire.MarshalPAPACRequest(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return wire.ASReq{PAData: []wire.PAData{
-		{Type: wire.PAPACRequest, Value: noPAC},
-	}, Body: wire.KDCReqBody{
+	return wire.ASReq{Body: wire.KDCReqBody{
 		Options: wire.OptForwardable | wire.OptProxiable |
 			wire.OptRenewableOK,
 		CName: &wire.PrincipalName{

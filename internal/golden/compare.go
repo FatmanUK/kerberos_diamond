@@ -222,7 +222,28 @@ func normalizeTicket(f *Fields, x Exchange, realm string) {
 	f.set("tkt.endtime", offset(x.Tkt.EndTime, base))
 	f.set("tkt.renew-till", offset(x.Tkt.RenewTill, base))
 	f.set("tkt.caddr", rawField(x.Tkt.CAddr))
-	f.set("tkt.authz-data", rawField(x.Tkt.AuthorizationData))
+	f.set("tkt.authz-data", authzField(x.Tkt))
+}
+
+// authzField renders a ticket's authorization data by its *shape*
+// rather than by its length.
+//
+// Until E3 nothing put authorization data in a ticket, so this field
+// was a length on both sides and compared the absence of one. Now
+// every ticket carries a PAC, and a length comparison would pass two
+// PACs whose buffers were in different orders or whose CLIENT_INFO
+// named different clients in the same number of octets -- which is
+// the same failure mode the transited field's comment above
+// describes.
+func authzField(t wire.EncTicketPart) string {
+	if len(t.AuthorizationData.FullBytes) == 0 {
+		return absent
+	}
+	ad, err := wire.AuthDataOf(t.AuthorizationData)
+	if err != nil {
+		return fmt.Sprintf("<unparseable: %v>", err)
+	}
+	return authzShape(ad)
 }
 
 func normalizeEnc(

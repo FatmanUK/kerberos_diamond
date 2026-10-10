@@ -204,10 +204,11 @@ Everything the plan file listed is done, so this list is now the live one.
    gap. Everything upstream still supports and this project does not is
    deprecated, weak, or both.
 8. **The Windows PAC**, last but one. Done: the container is anchored
-   against bytes three generations of Windows KDC produced, and the
-   KDC now issues a signed PAC in every ticket unless the client
-   declines one or the realm turns them off — see §3.1. Still to do is
-   `PA-PAC-OPTIONS` and then S4U.
+   against bytes three generations of Windows KDC produced, the KDC
+   issues a signed PAC in every ticket unless the client declines one
+   or the realm turns them off, and all 88 golden cases compare it —
+   with one case comparing the two KDCs' PACs octet for octet. Still
+   to do is `PA-PAC-OPTIONS` and then S4U.
 9. **S4U2Self and S4U2Proxy**, last.
 
 ## 3. Project State
@@ -634,11 +635,10 @@ are not "fixed" back by accident.
   only NDR upstream has is `kdc/ndr.c`, for `S4U_DELEGATION_INFO` alone),
   and there are three keyed checksums, or four on a service ticket.
 
-  The golden harness still declines the PAC with `PA-PAC-REQUEST(false)` —
-  something an unmodified client is entitled to do — so the field-by-field
-  comparison covers the whole reply with no skipped fields. Bringing the
-  PAC into that comparison is the next step and is deliberately separate,
-  because every existing case's `tkt.authz-data` changes when it happens.
+  **The golden harness no longer declines it**, so all 88 cases compare a
+  PAC this project built against one the C built. One case still declines,
+  because declining is behaviour too (`t_authdata.py:288-294`), and one
+  compares the two PACs **octet for octet** — see §6.
 - **FAST is implemented and advertised, both exchanges.** Announced in both
   the places upstream announces it: an empty `PA-FX-FAST` leading the preauth
   hint list (`kdc/kdc_preauth.c:999-1001`), which is what lets `kinit -T`
@@ -953,6 +953,24 @@ tests. It is green.
   rather than asserting them, and says in its own header comment that it does
   not even compile. The real check arrives with the AS exchange, when the C
   client has to decrypt a reply this code encrypted.
+- **The two KDCs' PACs for an AS exchange are byte for byte the same**,
+  which is the strongest single assertion in the harness. It is possible
+  because a PAC has no confounder in it: every octet is structure or a
+  keyed checksum over structure, so with the same keys, client and
+  authtime there is nothing left to disagree about. It pins the buffer
+  order, every offset and length, the implied padding, the NT timestamp,
+  the UTF-16LE name with no terminating NUL, the realm-less unparse, the
+  checksum type chosen for each signature, which key signs which, and the
+  order they are computed in — all at once.
+
+  A **service** ticket's PAC cannot be identical, and the reason is about
+  the ticket rather than the PAC: its ticket signature covers the encoded
+  `EncTicketPart`, which carries a freshly random session key, so all four
+  of its checksums necessarily differ. Those cases compare the PAC by its
+  *shape* — the buffer table, the payloads, and each signature's checksum
+  type and length but not its value — which is still far more than the
+  bare length this field was compared by before anything put authorization
+  data in a ticket.
 - **`internal/pac`** — covered, and anchored by bytes **no Kerberos
   implementation produced**. Every fixture came off a Windows KDC: a PAC
   from Windows Server 2003 by way of Samba's regression suite, four
