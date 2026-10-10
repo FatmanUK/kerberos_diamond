@@ -1,0 +1,77 @@
+Kerberos Diamond
+Copyright 2026 Adam J. Richardson
+
+This product is licensed under the Apache License, Version 2.0; see
+the LICENSE file.
+
+--------------------------------------------------------------------
+
+This product contains a from-scratch Go reimplementation of Kerberos
+5, derived by translation from the MIT Kerberos 5 distribution
+(https://web.mit.edu/kerberos/). That upstream source is vendored for
+reference as a read-only git submodule at kerberos/ and is not
+redistributed as part of this work; its own licence terms travel with
+it and apply to code derived from it, including the following notice,
+which is reproduced here as those terms require.
+
+    Copyright (C) 1985-2026 by the Massachusetts Institute of
+    Technology.
+
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or
+    without modification, are permitted provided that the following
+    conditions are met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+    CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+    INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+    CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+    USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+    AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+    LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+    ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+Individual files in that distribution additionally carry copyrights
+held by Apple Inc., Cygnus Support, FundsXpress Inc., Novell,
+OpenVision Technologies, Oracle, Red Hat Inc., Sun Microsystems and
+others, under terms of the same shape.
+
+--------------------------------------------------------------------
+
+MODIFIED SOFTWARE NOTICE
+
+Many of the MIT Kerberos 5 files this work is derived from require
+that derived software be labelled as modified and not distributed so
+as to be confused with the original. Accordingly:
+
+    This is modified software. It is NOT MIT Kerberos 5, it is not
+    derived from MIT Kerberos 5 by patching it, and it is neither
+    endorsed by nor supported by the Massachusetts Institute of
+    Technology. It is an independent reimplementation that aims at
+    behaviour compatibility and deliberately departs from upstream in
+    the ways README.md records.
+
+--------------------------------------------------------------------
+
+TRADEMARKS
+
+Kerberos is a trademark of the Massachusetts Institute of Technology.
+The name is used here to identify the protocol this software
+implements, which MIT's own notice permits for conveying information;
+it does not imply any endorsement or affiliation, and MIT's notice
+requires prior written permission from MIT for commercial use of the
+mark.

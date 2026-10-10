@@ -1010,6 +1010,13 @@ so listing it early would not survive.
 
 Nothing else is intended. The standard library covers the rest.
 
+**Every one of them is MIT or BSD-3**, which is a constraint on the list
+and not an observation about it: this project is Apache-2.0 (see `LICENSE`
+and `NOTICE`), and a copyleft dependency would either not be addable or
+would change what the project may be licensed as. Checked rather than
+assumed — gorm and pgx are MIT, `filippo.io/edwards25519` and the
+`golang.org/x` modules are BSD-3.
+
 The standard library covers more of this than it might seem:
 `encoding/asn1` for the wire types, `crypto/aes`, `crypto/hmac`,
 `crypto/sha1` and `crypto/pbkdf2` for the RFC 3962 enctypes, `crypto/tls`

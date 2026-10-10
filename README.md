@@ -298,3 +298,27 @@ There are no exemptions now. Every field of every case is compared.
 - `BOOTSTRAP.md` — orientation. §1 is what the tree does, §2 what is next,
   §3.3 every deliberate divergence with a citation, §6 what the tests cover
   and what they found.
+
+## Licence
+
+Apache License 2.0 — see `LICENSE`, and `NOTICE` for the attribution that
+travels with it.
+
+Apache rather than a copyleft licence for two reasons. Kerberos is an
+interoperability substrate and the rest of the ecosystem is permissive, so
+anything stricter would stop exactly the people most likely to want a KDC
+from embedding one. And this implements three Microsoft protocols — MS-PAC,
+MS-SFU and MS-KKDCP — so the explicit patent grant in §3 is worth having,
+which neither MIT nor BSD gives you.
+
+**This is not MIT Kerberos 5.** It is an independent reimplementation,
+derived by translation from the MIT Kerberos 5 source rather than by
+patching it, and it is neither endorsed by nor supported by MIT. MIT's own
+licence terms travel with code derived from theirs and are reproduced in
+`NOTICE`; several of the files this work was ported from require derived
+software to say plainly that it is modified and not to be confused with the
+original, which is what that file and this paragraph do.
+
+Kerberos is an MIT trademark, used here to name the protocol being
+implemented. MIT's notice requires prior written permission for commercial
+use of the mark.
